@@ -100,6 +100,13 @@ func execTellPlan(params execTellPlanParams) {
 				Msg:    "Panic in execTellPlan",
 			}
 		}
+		// Ensure RAG vector store is closed if it was initialized
+		if state != nil && state.ragVectorStore != nil {
+			log.Println("[TellExec] Closing RAG VectorStore.")
+			if err := state.ragVectorStore.Close(); err != nil {
+				log.Printf("[TellExec] Error closing RAG VectorStore: %v", err)
+			}
+		}
 	}()
 
 	if missingFileResponse == "" {

@@ -10,8 +10,102 @@ import (
 
 	shared "plandex-shared"
 
+	"context"
+
+	"github.com/PlandexAI/plandex/app/server/rag"
 	"github.com/sashabaranov/go-openai"
 )
+
+// retrieveRelevantContext fetches documents from the VectorStore relevant to the queryText.
+func retrieveRelevantContext(
+	ctx context.Context,
+	queryText string,
+	projectID string, // For logging or future filtering
+	clients map[string]model.ClientInfo, // To get an OpenAI client
+	vectorStore *rag.SQLiteVectorStore,
+	topN int,
+	embeddingModelName string,
+) ([]rag.IndexedDocument, error) {
+	if vectorStore == nil {
+		log.Println("RAG: VectorStore is nil, skipping retrieval.")
+		return nil, nil // Not an error, just no RAG context
+	}
+	if queryText == "" {
+		log.Println("RAG: Query text is empty, skipping retrieval.")
+		return nil, nil
+	}
+
+	// Get an OpenAI client from the clients map
+	// This assumes that a client for OpenAI is available under a known key, e.g., openai.Provider
+	var openAIClient *openai.Client
+	if clientInfo, ok := clients[openai.ProviderOpenAI]; ok && clientInfo.Client != nil {
+		// TODO: This type assertion needs to be safe. model.ClientInfo.Client is likely an interface.
+		// We need to ensure it's the correct type or use a getter method if available.
+		// For now, assuming direct type assertion works or that clientInfo.OpenAIClient exists.
+		if c, ok := clientInfo.Client.(*openai.Client); ok {
+			openAIClient = c
+		} else {
+			// Fallback: Attempt to get it from a specific field if it exists (hypothetical)
+			// if hasattr(clientInfo, "OpenAIClient") { openAIClient = clientInfo.OpenAIClient }
+			// This part is speculative and depends on model.ClientInfo structure.
+			// A safer way would be to have a method on clientInfo or a helper function.
+			log.Printf("RAG: OpenAI client found in map but type assertion to *openai.Client failed. Client type: %T", clientInfo.Client)
+			// As a last resort for this function's purpose, try to create one if not found or assertion fails.
+			// This is not ideal as API keys should be managed centrally.
+		}
+	}
+
+	if openAIClient == nil {
+		// If no client was successfully retrieved from the map, try to initialize a new one.
+		// This is a fallback and indicates a potential issue with client management.
+		log.Println("RAG: OpenAI client not found in provided clients map or type assertion failed. Attempting to initialize a new one for embeddings.")
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			return nil, fmt.Errorf("RAG: OPENAI_API_KEY not set, cannot generate query embedding")
+		}
+		openAIClient = openai.NewClient(apiKey)
+	}
+
+	if openAIClient == nil { // Still nil after trying to initialize
+	    return nil, fmt.Errorf("RAG: OpenAI client could not be initialized for query embedding")
+	}
+
+
+	// Generate embedding for the queryText
+	model := openai.EmbeddingModel(embeddingModelName)
+	if model == "" {
+		model = openai.AdaEmbeddingV2 // Default model
+	}
+
+	req := openai.EmbeddingRequest{
+		Input: []string{queryText},
+		Model: model,
+	}
+
+	log.Printf("RAG: Generating embedding for query: '%s' using model: %s", queryText, model)
+	resp, err := openAIClient.CreateEmbeddings(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("RAG: error creating query embeddings: %w", err)
+	}
+
+	if len(resp.Data) == 0 || len(resp.Data[0].Embedding) == 0 {
+		return nil, fmt.Errorf("RAG: received empty embedding data from API for query")
+	}
+	queryEmbedding := resp.Data[0].Embedding
+	log.Printf("RAG: Query embedding generated successfully. Dimension: %d", len(queryEmbedding))
+
+	// Search for similar documents
+	// TODO: filePathFilter might be useful here, e.g. if current subtask focuses on specific files.
+	log.Printf("RAG: Searching for top %d similar documents.", topN)
+	retrievedDocs, err := vectorStore.SearchSimilar(queryEmbedding, topN, "")
+	if err != nil {
+		return nil, fmt.Errorf("RAG: error searching for similar documents: %w", err)
+	}
+
+	log.Printf("RAG: Retrieved %d documents from VectorStore.", len(retrievedDocs))
+	return retrievedDocs, nil
+}
+
 
 type formatModelContextParams struct {
 	includeMaps          bool
@@ -28,6 +122,58 @@ type formatModelContextParams struct {
 
 func (state *activeTellStreamState) formatModelContext(params formatModelContextParams) []*types.ExtendedChatMessagePart {
 	log.Println("Tell plan - formatModelContext")
+
+	var ragContextStrings []string
+	var ragTokenCount int
+
+	// Check RAG configuration from plan settings.
+	ragEnabledInConfig := false
+	if state.settings != nil && state.settings.RAGSettings != nil && state.settings.RAGSettings.Enabled {
+		ragEnabledInConfig = true
+	}
+
+	if ragEnabledInConfig && state.ragVectorStore != nil {
+		currentUserQuery := state.userPrompt // Or state.req.Prompt, if more suitable
+		if currentUserQuery != "" {
+			log.Printf("RAG: RAG is enabled. Attempting retrieval for query: %s", currentUserQuery)
+			// TODO: Make topN and embeddingModelName configurable, possibly from state.settings or a dedicated RAG config.
+			topN := 3
+			embeddingModelName := string(openai.AdaEmbeddingV2) // Default, should align with indexer.
+
+			// Use state.activePlan.Ctx for the context of the retrieval operation.
+			// Ensure state.clients is correctly passed and handled in retrieveRelevantContext for OpenAI client.
+			retrievedDocs, err := retrieveRelevantContext(state.activePlan.Ctx, currentUserQuery, state.plan.ProjectId, state.clients, state.ragVectorStore, topN, embeddingModelName)
+			if err != nil {
+				log.Printf("RAG: Error during context retrieval: %v", err)
+			} else {
+				if len(retrievedDocs) > 0 {
+					log.Printf("RAG: Successfully retrieved %d documents.", len(retrievedDocs))
+					ragContextStrings = append(ragContextStrings, "### Retrieved Contextual Information (RAG) ###")
+					for _, doc := range retrievedDocs {
+						formattedDoc := fmt.Sprintf("Retrieved context from file `%s`:\n---\n%s\n---", doc.FilePath, doc.TextChunk)
+						ragContextStrings = append(ragContextStrings, formattedDoc)
+						chunkTokenCount := shared.GetNumTokensEstimate(formattedDoc)
+						ragTokenCount += chunkTokenCount
+						log.Printf("RAG: Adding retrieved doc ID %s, Path: %s. Chunk tokens: %d", doc.ID, doc.FilePath, chunkTokenCount)
+					}
+					ragContextStrings = append(ragContextStrings, "### End of Retrieved Contextual Information (RAG) ###")
+					log.Printf("RAG: Total tokens added from RAG context: %d", ragTokenCount)
+				} else {
+					log.Println("RAG: No documents retrieved for the query.")
+				}
+			}
+		} else {
+			log.Println("RAG: Skipping retrieval because current user query is empty.")
+		}
+	} else {
+		if !ragEnabledInConfig {
+			log.Println("RAG: Skipping retrieval because RAG is disabled in plan configuration.")
+		} else if state.ragVectorStore == nil {
+			log.Println("RAG: Skipping retrieval because RAG vector store is not initialized (it may have failed to load or DB does not exist).")
+		}
+		// If both are true, the second message is more specific.
+		// If ragEnabledInConfig is false, the first message is sufficient.
+	}
 
 	includeMaps := params.includeMaps
 	smartContextEnabled := params.smartContextEnabled
@@ -49,9 +195,13 @@ func (state *activeTellStreamState) formatModelContext(params formatModelContext
 	log.Printf("Tell plan - formatModelContext - basicOnly: %t, activeOnly: %t, autoOnly: %t, smartContextEnabled: %t, execEnabled: %t, includeMaps: %t, activatePaths: %v, activatePathsOrdered: %v, maxTokens: %d\n",
 		basicOnly, activeOnly, autoOnly, smartContextEnabled, includeApplyScript, includeMaps, activatePaths, activatePathsOrdered, params.maxTokens)
 
-	var contextBodies []string = []string{
-		"### LATEST PLAN CONTEXT ###",
+	var contextBodies []string
+	// Add RAG context first if available
+	if len(ragContextStrings) > 0 {
+		contextBodies = append(contextBodies, ragContextStrings...)
 	}
+	contextBodies = append(contextBodies, "### LATEST PLAN CONTEXT ###")
+
 	addedFilesSet := map[string]bool{}
 
 	uses := map[string]bool{}

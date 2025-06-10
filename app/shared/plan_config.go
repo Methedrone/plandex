@@ -81,6 +81,9 @@ type PlanConfig struct {
 
 	AutoRevertOnRewind bool `json:"autoRevertOnRewind"`
 
+	RAGSettings *RAGConfig `json:"ragSettings,omitempty"`
+	MCPSettings *MCPConfig `json:"mcpSettings,omitempty"` // Settings for Model-Calling-Plandex
+
 	// ReplMode    bool     `json:"replMode"`
 	// DefaultRepl ReplType `json:"defaultRepl"`
 
@@ -465,13 +468,41 @@ var ConfigSettingsByKey = map[string]ConfigSetting{
 			return fmt.Sprintf("%t", p.AutoRevertOnRewind)
 		},
 	},
+	"ragenabled": {
+		Name: "RAG Enabled",
+		Desc: "Enable/disable Retrieval Augmented Generation to enhance context.",
+		BoolSetter: func(p *PlanConfig, enabled bool) {
+			if p.RAGSettings == nil {
+				p.RAGSettings = &RAGConfig{}
+			}
+			p.RAGSettings.Enabled = enabled
+			// Note: This doesn't automatically set AutoMode to Custom.
+			// Depending on product decision, enabling/disabling RAG could switch AutoMode.
+			// For now, it's an independent setting.
+		},
+		Getter: func(p *PlanConfig) string { // Getter used by `plandex config` display
+			if p.RAGSettings != nil && p.RAGSettings.Enabled {
+				return "Enabled"
+			}
+			return "Disabled"
+		},
+		SortKey: "10_rag", // Example sort key, adjust as needed
+	},
 }
 
 func init() {
 	DefaultPlanConfig.SetAutoMode(AutoModeSemi)
+	// By default, RAG is disabled. To enable, RAGSettings must be explicitly set.
+	// DefaultPlanConfig.RAGSettings = &RAGConfig{Enabled: false} // Or true if we want it on by default
 
 	for _, choice := range AutoModeOptions {
 		AutoModeChoices = append(AutoModeChoices, fmt.Sprintf("%s → %s", choice[1], choice[2]))
 		AutoModeLabels[AutoModeType(choice[0])] = choice[1]
 	}
+}
+
+// RAGConfig holds settings related to Retrieval Augmented Generation.
+type RAGConfig struct {
+	Enabled bool `json:"enabled"`
+	// Potentially add TopN, ChunkSize, etc. here later
 }

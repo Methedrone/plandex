@@ -182,6 +182,14 @@ func addApiRoutes(r *mux.Router, prefix string) {
 
 	HandlePlandexFn(r, prefix+"/default_plan_config", false, handlers.GetDefaultPlanConfigHandler).Methods("GET")
 	HandlePlandexFn(r, prefix+"/default_plan_config", false, handlers.UpdateDefaultPlanConfigHandler).Methods("PUT")
+
+	// RAG Endpoints
+	HandlePlandexFn(r, prefix+"/project/{projectId}/index", false, handlers.HandleIndexProject).Methods("POST")
+
+	// MCP Tool Management Endpoints
+	HandlePlandexFn(r, prefix+"/plan/{planId}/mcp/tools", false, handlers.HandleAddMCPTool).Methods("POST")
+	HandlePlandexFn(r, prefix+"/plan/{planId}/mcp/tools", false, handlers.HandleListMCPTools).Methods("GET")
+	HandlePlandexFn(r, prefix+"/plan/{planId}/mcp/tools/{toolName}", false, handlers.HandleRemoveMCPTool).Methods("DELETE")
 }
 
 func addProxyableApiRoutes(r *mux.Router, prefix string) {

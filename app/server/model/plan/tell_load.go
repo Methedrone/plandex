@@ -13,9 +13,30 @@ import (
 
 	shared "plandex-shared"
 
+	"os"
+	"path/filepath"
+
+	"github.com/PlandexAI/plandex/app/server/rag"
 	"github.com/jmoiron/sqlx"
 	"github.com/sashabaranov/go-openai"
 )
+
+// TODO: Move this to a shared utility package
+func getProjectRootPathFromTell(projectID string) (string, error) {
+	// This is a temporary placeholder.
+	// It needs to correctly resolve the project's root directory on the server.
+	// For local dev, Plandex projects are typically cloned into a 'projects' subdirectory
+	// relative to where the server is running.
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("error getting current working directory: %w", err)
+	}
+	// Assuming server runs from a location where "projects/{projectID}" is valid.
+	// This might need to be relative to a base path configured for projects.
+	// In production, this path would likely come from a project configuration database.
+	log.Printf("RAG: Assuming project root relative to current working directory for project %s: %s", projectID, wd)
+	return filepath.Join(wd, "projects", projectID), nil
+}
 
 func (state *activeTellStreamState) loadTellPlan() error {
 	clients := state.clients
@@ -61,6 +82,24 @@ func (state *activeTellStreamState) loadTellPlan() error {
 		CancelFn: active.CancelFn,
 		Reason:   "load tell plan",
 	}, func(repo *db.GitRepo) error {
+		// RAG Initialization depends on settings, which are loaded in a goroutine below.
+		// We will initialize RAG after settings are loaded.
+		// For now, declare a placeholder that will be populated once settings are available.
+		var attemptRAGInitialization bool = true // Default to true, will be checked after settings load
+
+		// Ensure OpenAI client for embeddings is available (it might be part of state.clients)
+		// For now, assume one of the clients in state.clients can be used or it's handled elsewhere.
+		// If not, it would be initialized here:
+		// if state.openAIClientForRAG == nil { // Assuming a new field state.openAIClientForRAG
+		//   apiKey := os.Getenv("OPENAI_API_KEY")
+		//   if apiKey == "" {
+		//     log.Println("RAG: OPENAI_API_KEY not set, cannot create embeddings for queries.")
+		//   } else {
+		//     state.openAIClientForRAG = openai.NewClient(apiKey)
+		//   }
+		// }
+
+
 		errCh := make(chan error, 4)
 
 		// get name for plan and rename if it's a draft
@@ -73,15 +112,64 @@ func (state *activeTellStreamState) loadTellPlan() error {
 				}
 			}()
 
+			// Load settings first, as RAG initialization depends on it.
 			res, err := db.GetPlanSettings(plan, true)
 			if err != nil {
-				log.Printf("Error getting plan settings: %v\n", err)
-				errCh <- fmt.Errorf("error getting plan settings: %v", err)
-				return
+				log.Printf("Error getting plan settings: %v. RAG initialization will be skipped.", err)
+				attemptRAGInitialization = false // Cannot determine RAG config
+				settings = &shared.PlanConfig{} // Ensure settings is not nil for other operations
+				// errCh <- fmt.Errorf("error getting plan settings: %v", err) // Decide if this is fatal for the whole load
+				// return
+			} else {
+				settings = res
 			}
-			settings = res
 
-			if plan.Name == "draft" {
+			// Now check RAG settings
+			if settings.RAGSettings == nil || !settings.RAGSettings.Enabled {
+				log.Println("RAG: RAGSettings are nil or RAG is disabled in plan configuration. Skipping RAG VectorStore initialization.")
+				attemptRAGInitialization = false
+			}
+
+			if attemptRAGInitialization {
+				projectID := plan.ProjectId
+				if projectID == "" && plan.Id != "" {
+					log.Printf("RAG: plan.ProjectId is empty, attempting to use plan.Id (%s) as projectID for RAG path. This might be incorrect.", plan.Id)
+					projectID = plan.Id
+				}
+
+				if projectID != "" {
+					projectRootPath, pathErr := getProjectRootPathFromTell(projectID)
+					if pathErr != nil {
+						log.Printf("RAG: Error getting project root path for project %s: %v. RAG will be disabled.", projectID, pathErr)
+					} else {
+						ragDbDir := filepath.Join(projectRootPath, ".plandex")
+						if _, statErr := os.Stat(ragDbDir); os.IsNotExist(statErr) {
+							log.Printf("RAG: .plandex directory does not exist at %s. RAG DB likely missing.", ragDbDir)
+						}
+						dbPath := filepath.Join(ragDbDir, "rag.db")
+						log.Printf("RAG: Attempting to initialize SQLiteVectorStore for project %s from path: %s", projectID, dbPath)
+						if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+							log.Printf("RAG: Database file %s does not exist. RAG context retrieval will be skipped.", dbPath)
+						} else {
+							vectorStore, storeErr := rag.NewSQLiteVectorStore(dbPath)
+							if storeErr != nil {
+								log.Printf("RAG: Error initializing SQLiteVectorStore for project %s (path: %s): %v. RAG will be disabled.", projectID, dbPath, storeErr)
+							} else {
+								log.Printf("RAG: SQLiteVectorStore initialized successfully for project %s.", projectID)
+								// This assignment needs to be thread-safe if state is accessed by other goroutines concurrently.
+								// However, state itself is typically constructed and then passed around.
+								// For now, direct assignment. If issues arise, consider locks or passing via channel.
+								state.ragVectorStore = vectorStore
+							}
+						}
+					}
+				} else {
+					log.Println("RAG: Project ID is empty, cannot initialize RAG VectorStore.")
+				}
+			}
+
+
+			if plan.Name == "draft" && settings != nil { // ensure settings was loaded
 				name, err := model.GenPlanName(
 					auth,
 					plan,

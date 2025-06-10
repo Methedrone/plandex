@@ -8,6 +8,7 @@ import (
 
 	shared "plandex-shared"
 
+	"github.com/PlandexAI/plandex/app/server/rag"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -62,6 +63,7 @@ type activeTellStreamState struct {
 	numFallbackRetry  int
 	modelErr          *shared.ModelError
 	noCacheSupportErr bool
+	ragVectorStore    *rag.SQLiteVectorStore // For RAG context retrieval
 }
 
 type chunkProcessor struct {
