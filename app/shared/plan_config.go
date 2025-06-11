@@ -10,11 +10,12 @@ import (
 const defaultAutoDebugTries = 5
 
 const (
-	EditorTypeVim  string = "vim"
-	EditorTypeNano string = "nano"
+	EditorTypeVim     string = "vim"
+	EditorTypeNano    string = "nano"
+	EditorTypeOrbiton string = "orbiton" // Add this line
 )
 
-const defaultEditor = EditorTypeVim
+const defaultEditor = EditorTypeOrbiton // Change this line
 
 type AutoModeType string
 
@@ -247,7 +248,7 @@ var ConfigSettingsByKey = map[string]ConfigSetting{
 		Getter: func(p *PlanConfig) string {
 			return p.Editor
 		},
-		Choices:         &[]string{EditorTypeVim, EditorTypeNano},
+		Choices:         &[]string{EditorTypeVim, EditorTypeNano, EditorTypeOrbiton}, // Add EditorTypeOrbiton here
 		HasCustomChoice: true,
 	},
 
