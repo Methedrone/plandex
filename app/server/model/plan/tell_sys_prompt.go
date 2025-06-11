@@ -1,12 +1,15 @@
 package plan
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"plandex-server/model/prompts"
 	"plandex-server/types"
 	shared "plandex-shared"
+	"strings"
 
 	"github.com/sashabaranov/go-openai"
 )
@@ -178,6 +181,56 @@ func (state *activeTellStreamState) getTellSysPrompt(params getTellSysPromptPara
 			return nil, fmt.Errorf("planningSharedMsgs not supported during implementation stage - only basic or smart context is supported")
 		}
 	}
+
+	// Add MCP Tool Definitions and Invocation Instructions if enabled
+	if state.settings != nil && state.settings.MCPSettings != nil && state.settings.MCPSettings.Enabled && len(state.settings.MCPSettings.Tools) > 0 {
+		log.Println("MCP: Enabled and tools available. Augmenting system prompt with MCP tools.")
+		var mcpToolStrings []string
+		mcpToolStrings = append(mcpToolStrings, "\n\n### Available Tools (Model Context Protocol) ###")
+		mcpToolStrings = append(mcpToolStrings, "Here are the tools available to you. Use their descriptions to understand when and how to use them effectively:")
+
+		for _, tool := range state.settings.MCPSettings.Tools {
+			var inputSchemaFormatted string
+			if tool.InputSchema != "" {
+				var prettyInput bytes.Buffer
+				if err := json.Indent(&prettyInput, []byte(tool.InputSchema), "", "  "); err == nil {
+					inputSchemaFormatted = prettyInput.String()
+				} else {
+					log.Printf("MCP: Error pretty-printing InputSchema for tool %s: %v. Using raw string.", tool.ToolName, err)
+				inputSchemaFormatted = tool.InputSchema // Fallback to raw string
+				}
+			} else {
+				inputSchemaFormatted = "{}" // Represent empty schema as empty JSON object
+			}
+
+			// OutputSchema is primarily for documentation and validation, not usually shown to LLM unless specifically designed for it.
+			// Omitting OutputSchema from the prompt for now to save tokens and reduce complexity for the LLM.
+
+			mcpToolStrings = append(mcpToolStrings, fmt.Sprintf(
+				"\n---\nTool Name: `%s`\nDescription: %s\nInput Schema (JSON):\n```json\n%s\n```", // ToolName in backticks
+				tool.ToolName,
+				tool.Description,
+				inputSchemaFormatted,
+			))
+		}
+		mcpToolStrings = append(mcpToolStrings, "---\n") // End of tools list
+		mcpToolStrings = append(mcpToolStrings, "Always refer to the Input Schema for the exact structure and types of parameters required by each tool.")
+
+		// Invocation Instructions (now more detailed)
+		mcpToolStrings = append(mcpToolStrings, prompts.GetMCPInvocationInstructions())
+
+		sysParts = append(sysParts, types.ExtendedChatMessagePart{
+			Type: openai.ChatMessagePartTypeText,
+			Text: strings.Join(mcpToolStrings, "\n"),
+		})
+	} else {
+		if state.settings != nil && state.settings.MCPSettings != nil && state.settings.MCPSettings.Enabled {
+			log.Println("MCP: Enabled but no tools defined.")
+		} else {
+			log.Println("MCP: Disabled or MCPSettings not configured.")
+		}
+	}
+
 
 	return sysParts, nil
 }

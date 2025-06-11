@@ -64,6 +64,20 @@ type activeTellStreamState struct {
 	modelErr          *shared.ModelError
 	noCacheSupportErr bool
 	ragVectorStore    *rag.SQLiteVectorStore // For RAG context retrieval
+
+	// Fields for MCP Tool Call
+	pendingToolCall       *shared.PlandexToolInvocationRequest
+	pendingToolDefinition *shared.MCPToolDefinition
+	// allConvoMessages stores the accumulated conversation history for the current "tell" session,
+	// including original user prompt, assistant replies, tool calls, and tool results.
+	// It is used to build the messages sent to the LLM for each turn.
+	allConvoMessages []types.ExtendedChatMessage
+}
+
+// ClearPendingToolCall resets the pending tool call and definition on the state.
+func (state *activeTellStreamState) ClearPendingToolCall() {
+	state.pendingToolCall = nil
+	state.pendingToolDefinition = nil
 }
 
 type chunkProcessor struct {

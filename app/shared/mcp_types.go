@@ -34,5 +34,17 @@ type MCPToolDefinition struct {
 
 // MCPConfig holds the configuration for Model-Calling-Plandex, primarily a list of available tools.
 type MCPConfig struct {
-	Tools []MCPToolDefinition `json:"tools,omitempty"`
+	Enabled bool                `json:"enabled,omitempty"` // Whether MCP features are globally enabled for this plan
+	Tools   []MCPToolDefinition `json:"tools,omitempty"`
+}
+
+// PlandexToolInvocationRequest represents the LLM's request to invoke a specific tool.
+type PlandexToolInvocationRequest struct {
+	ToolName  string                 `json:"tool_name"`            // The name of the tool to be invoked.
+	ToolInput map[string]interface{} `json:"tool_input,omitempty"` // The input parameters for the tool, matching its InputSchema.
+}
+
+// PlandexToolInvocationWrapper is the expected top-level structure for a tool invocation JSON object from the LLM.
+type PlandexToolInvocationWrapper struct {
+	Invocation PlandexToolInvocationRequest `json:"plandex_tool_invocation"`
 }

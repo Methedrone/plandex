@@ -396,34 +396,16 @@ func execTellPlan(params execTellPlanParams) {
 	}
 
 	// log.Println("Tell plan - modelConfig:", spew.Sdump(modelConfig))
-	state.modelConfig = &modelConfig
+	state.modelConfig = &modelConfig // This modelConfig is tentative, might change in doTellRequest based on retries/fallbacks
 
-	// if the model doesn't support cache control, remove the cache control spec from the messages
-	if !modelConfig.BaseModelConfig.SupportsCacheControl {
-		for i := range state.messages {
-			for j := range state.messages[i].Content {
-				if state.messages[i].Content[j].CacheControl != nil {
-					state.messages[i].Content[j].CacheControl = nil
-				}
-			}
-		}
-	}
+	// The state.messages will be constructed inside the manageTellLifecycle loop now,
+	// using allConvoMessages as the historical basis.
+	// The cache control and image support checks will need to happen on the messages
+	// prepared for each specific API call within doTellRequest or just before it.
 
-	// if the model doesn't support images, remove any image parts from the messages
-	if !modelConfig.BaseModelConfig.HasImageSupport {
-		log.Println("Tell exec - model doesn't support images. Removing image parts from messages. File name will still be included.")
-
-		for i := range state.messages {
-			filteredContent := []types.ExtendedChatMessagePart{}
-			for _, part := range state.messages[i].Content {
-				if part.Type != openai.ChatMessagePartTypeImageURL {
-					filteredContent = append(filteredContent, part)
-				}
-			}
-			state.messages[i].Content = filteredContent
-		}
-	}
-
+	log.Println("tell exec - initial model request will be prepared in manageTellLifecycle using allConvoMessages.")
+	// The original logging of the request details will now effectively be inside doTellRequest.
+	/*
 	log.Println("tell exec - will send model request with:", spew.Sdump(map[string]interface{}{
 		"provider": modelConfig.BaseModelConfig.Provider,
 		"model":    modelConfig.BaseModelConfig.ModelName,
@@ -445,47 +427,102 @@ func execTellPlan(params execTellPlanParams) {
 		return
 	}
 
-	state.doTellRequest()
+	}))
+	*/
 
-	if shouldBuildPending {
-		go state.queuePendingBuilds()
+	// Initialize allConvoMessages here
+	state.allConvoMessages = []types.ExtendedChatMessage{
+		{Role: openai.ChatMessageRoleSystem, Content: sysParts},
 	}
 
-	UpdateActivePlan(planId, branch, func(ap *types.ActivePlan) {
-		ap.CurrentStreamingReplyId = state.replyId
-		ap.CurrentReplyDoneCh = make(chan bool, 1)
-	})
+	// Append historical conversation messages from state.convo (loaded by loadTellPlan)
+	for _, msg := range state.convo {
+		if msg.Role == openai.ChatMessageRoleSystem { // Avoid duplicate system messages
+			continue
+		}
+		// Convert db.ConvoMessage to types.ExtendedChatMessage
+		// Assuming simple text content for historical messages for now.
+		// If history contains complex multi-part messages, this needs more sophisticated conversion.
+		state.allConvoMessages = append(state.allConvoMessages, types.ExtendedChatMessage{
+			Role:    msg.Role,
+			Content: []types.ExtendedChatMessagePart{{Type: openai.ChatMessagePartTypeText, Text: msg.Message}},
+			// Name: msg.Name, // If db.ConvoMessage has a Name field for tool calls
+		})
+	}
+	log.Printf("MCP: Initialized allConvoMessages with system prompt and %d historical messages. Total: %d", len(state.convo), len(state.allConvoMessages))
 
+
+	// The main interaction loop is now in manageTellLifecycle
+	state.manageTellLifecycle(params) // Pass original execTellPlanParams
+
+	// The original logic for queuePendingBuilds and UpdateActivePlan for CurrentStreamingReplyId
+	// is now effectively handled at the end of manageTellLifecycle or within its loop iterations.
 }
+
 
 func (state *activeTellStreamState) doTellRequest() {
 	clients := state.clients
-	modelConfig := state.modelConfig
+	// modelConfig is now set and updated in manageTellLifecycle or just before this call.
+	// Ensure state.modelConfig is the one to use (it's updated by fallback logic too)
 	active := state.activePlan
 
-	fallbackRes := modelConfig.GetFallbackForModelError(state.numErrorRetry, state.modelErr)
-	modelConfig = fallbackRes.ModelRoleConfig
+	if state.modelConfig == nil {
+		log.Printf("MCP: CRITICAL - state.modelConfig is nil at the start of doTellRequest.")
+		active.StreamDoneCh <- &shared.ApiError{Msg: "Internal error: Model configuration unexpectedly missing before API call."}
+		return
+	}
+
+	currentModelConfig := state.modelConfig // Use the one from state, which might have been updated by fallback logic
+
+	// Fallback logic is now conceptually before this call, within manageTellLifecycle's loop,
+	// or state.modelConfig is updated by it. Let's assume state.modelConfig is current.
+	// fallbackRes := currentModelConfig.GetFallbackForModelError(state.numErrorRetry, state.modelErr)
+	// currentModelConfig = fallbackRes.ModelRoleConfig
+	// state.modelConfig = currentModelConfig // Persist it back to state for next retry/รอบ
+
 	stop := []string{"<PlandexFinish/>"}
 
-	// log.Println("Stop:", stop)
-	// spew.Dump(state.messages)
+	// Prepare messages for this specific API request from allConvoMessages
+	// This is where final filtering (cache, images) should happen based on currentModelConfig
 
-	// log.Println("modelConfig:", spew.Sdump(modelConfig))
+	finalMessagesForAPI := make([]types.ExtendedChatMessage, len(state.allConvoMessages))
+	copy(finalMessagesForAPI, state.allConvoMessages)
 
-	if state.noCacheSupportErr {
-		log.Println("Tell exec - request failed with cache support error. Removing cache control breakpoints from messages.")
-		for i := range state.messages {
-			for j := range state.messages[i].Content {
-				if state.messages[i].Content[j].CacheControl != nil {
-					state.messages[i].Content[j].CacheControl = nil
+
+	if !currentModelConfig.BaseModelConfig.SupportsCacheControl {
+		for i := range finalMessagesForAPI {
+			for j := range finalMessagesForAPI[i].Content {
+				if finalMessagesForAPI[i].Content[j].CacheControl != nil {
+					finalMessagesForAPI[i].Content[j].CacheControl = nil
 				}
 			}
 		}
 	}
 
+	if !currentModelConfig.BaseModelConfig.HasImageSupport {
+		log.Println("Tell exec - model doesn't support images. Removing image parts from messages. File name will still be included.")
+		for i := range finalMessagesForAPI {
+			var filteredContent []types.ExtendedChatMessagePart
+			for _, part := range finalMessagesForAPI[i].Content {
+				if part.Type != openai.ChatMessagePartTypeImageURL {
+					filteredContent = append(filteredContent, part)
+				}
+			}
+			finalMessagesForAPI[i].Content = filteredContent
+		}
+	}
+
+	// Token calculation and potential trimming of finalMessagesForAPI should happen here
+	// For now, sending all. This could exceed token limits if conversation is long.
+	requestTokens := model.GetMessagesTokenEstimate(finalMessagesForAPI...) + model.TokensPerRequest
+	state.totalRequestTokens = requestTokens
+	log.Printf("MCP: doTellRequest - Total request tokens estimated: %d", requestTokens)
+	// Add check against currentModelConfig.MaxInputTokens and handle error if exceeded.
+
+
 	modelReq := types.ExtendedChatCompletionRequest{
-		Model:    modelConfig.BaseModelConfig.ModelName,
-		Messages: state.messages,
+		Model:    currentModelConfig.BaseModelConfig.ModelName,
+		Messages: finalMessagesForAPI, // Use the prepared messages for this request
 		Stream:   true,
 		StreamOptions: &openai.StreamOptions{
 			IncludeUsage: true,

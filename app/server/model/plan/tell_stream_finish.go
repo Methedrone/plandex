@@ -13,6 +13,7 @@ import (
 	shared "plandex-shared"
 
 	"github.com/davecgh/go-spew/spew"
+	"strings" // Added for TryParseToolInvocation logic, though mcp_parser uses it.
 )
 
 const MaxAutoContinueIterations = 200
@@ -46,6 +47,82 @@ func (state *activeTellStreamState) handleStreamFinished() handleStreamFinishedR
 	}
 
 	active := state.activePlan
+
+	// --- MCP Tool Invocation Parsing ---
+	var isToolCall bool
+	var toolRequest *shared.PlandexToolInvocationRequest
+	var matchedToolDef *shared.MCPToolDefinition
+	// Ensure settings and MCP settings are available before trying to parse
+	if state.settings != nil && state.settings.MCPSettings != nil && state.settings.MCPSettings.Enabled && len(state.settings.MCPSettings.Tools) > 0 {
+		var validationErr error
+		log.Printf("MCP: Checking for tool invocation in response: %s", active.CurrentReplyContent)
+		toolRequest, isToolCall, validationErr, matchedToolDef = TryParseToolInvocation(active.CurrentReplyContent, state.settings.MCPSettings.Tools)
+
+		if isToolCall {
+			if validationErr != nil {
+				log.Printf("MCP: Invalid tool invocation attempt: %v. Treating as normal message.", validationErr)
+				isToolCall = false // Invalidate the tool call due to error
+				toolRequest = nil
+				matchedToolDef = nil
+			} else {
+				log.Printf("MCP: Valid tool invocation request for tool '%s' detected and validated.", toolRequest.ToolName)
+				// TODO: Store toolRequest and matchedToolDef in state for execution in the next cycle.
+				// For now, we will prevent this message from being further processed as a regular reply.
+				// The actual tool execution step will handle sending a result back to the LLM.
+
+				// Clear the current reply content as it's a tool call, not a message to the user.
+				// This might need adjustment based on how `storeOnFinished` and `summarizeConvo` use CurrentReplyContent.
+				// For now, let's assume this is the right approach to prevent user display.
+				// active.CurrentReplyContent = fmt.Sprintf("[Tool call to '%s' processing...]", toolRequest.ToolName) // Placeholder content
+
+				// Signal that a tool call is pending. This needs a new field in activeTellStreamState or activePlan.
+				// For now, we'll just log and then potentially alter flow later in this function.
+				// This is where the flow would diverge significantly.
+				// For this subtask, we'll focus on detection and validation.
+				// The next subtask will handle the execution flow.
+
+				// For now, effectively stop normal processing of this "message"
+				// We might need to send a specific signal back to mainLoop or tell_exec
+				// or set a state that the next action is tool execution.
+
+				// Let's assume we set something on the state:
+				state.pendingToolCall = toolRequest
+				state.pendingToolDefinition = matchedToolDef
+
+				// The rest of handleStreamFinished might need to be conditional based on pendingToolCall.
+				// For now, let's just log and proceed to see where it breaks or needs adjustment.
+			}
+		}
+	}
+	// --- End MCP Tool Invocation Parsing ---
+
+	// If it's a tool call, we might want to bypass much of the standard message processing.
+	if state.pendingToolCall != nil {
+		log.Printf("MCP: Tool call to '%s' is pending. Skipping standard stream finish processing.", state.pendingToolCall.ToolName)
+		// TODO: Implement the actual tool execution flow.
+		// For now, we will let it go through summarizeConvo and storeOnFinished,
+		// but these might need to be aware of the tool call.
+		// A simple solution for now is to just mark the reply as "processed" so it doesn't show to user,
+		// and then the next iteration of the tell loop would pick up the pendingToolCall.
+		// This means the 'summarizeConvo' and 'storeOnFinished' might operate on an empty/modified reply.
+
+		// Send a message to active.CurrentReplyDoneCh to unblock the main loop
+		// This is important because the main loop waits on this channel.
+		log.Println("MCP: Signaling CurrentReplyDoneCh for pending tool call.")
+		active.CurrentReplyDoneCh <- true
+		log.Println("MCP: Resetting active.CurrentReplyDoneCh for pending tool call.")
+		UpdateActivePlan(planId, branch, func(ap *types.ActivePlan) {
+			ap.CurrentStreamingReplyId = ""
+			ap.CurrentReplyDoneCh = nil
+			// Potentially set a status on ActivePlan like "awaiting_tool_execution"
+		})
+
+		// TODO: Trigger the next step in execTellPlan for tool execution
+		// This might involve returning a specific result or setting a flag that execTellPlan checks.
+		// For now, returning true to stop further processing in this function.
+		return handleStreamFinishedResult{shouldReturn: true} // Stop further processing in this function
+	}
+
 
 	time.Sleep(30 * time.Millisecond)
 	active.FlushStreamBuffer()
@@ -103,7 +180,10 @@ func (state *activeTellStreamState) handleStreamFinished() handleStreamFinishedR
 
 	log.Println("allSubtasksFinished:\n", spew.Sdump(allSubtasksFinished))
 
+
 	// summarize convo needs to come *after* the reply is stored in order to correctly summarize the latest message
+	// If it was a tool call, CurrentReplyContent might be empty or a placeholder.
+	// Summarization logic should ideally handle this (e.g., not summarize tool calls or summarize the intent).
 	log.Println("summarizing convo in background")
 	// summarize in the background
 	go func() {

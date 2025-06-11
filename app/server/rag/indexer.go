@@ -142,38 +142,78 @@ func (i *Indexer) IndexProjectFiles(projectRoot string) error {
 			log.Printf("File %s is new or not found in store. Indexing.", path)
 		}
 
-		// Content Chunking (basic newline splitting)
-		// TODO: Implement more sophisticated chunking based on i.config.MaxChunkSizeTokens
-		chunks := strings.Split(string(content), "\n\n") // Simple paragraph-like splitting
-		if len(chunks) == 0 && len(content) > 0 {        // Handle files with no double newlines
+		// Content Chunking
+		var chunks []string
+		charLimit := 0
+		if i.config.MaxChunkSizeTokens > 0 {
+			// Approximate character limit: average 3.5 chars/token. This is a rough heuristic.
+			// Using a proper tokenizer (e.g., tiktoken) would be more accurate but adds complexity/dependencies.
+			// TODO: Replace with tokenizer-based chunking for better accuracy.
+			charLimit = int(float64(i.config.MaxChunkSizeTokens) * 3.5)
+			log.Printf("RAG Indexer: Using character-based chunking for %s. Target chars/chunk: %d (from MaxChunkSizeTokens: %d)", path, charLimit, i.config.MaxChunkSizeTokens)
+
+			lines := strings.Split(string(content), "\n")
+			var currentChunk strings.Builder
+			for _, line := range lines {
+				// If a single line exceeds the charLimit, it will be a chunk on its own (or could be hard-split).
+				// For now, a long line becomes its own chunk.
+				if currentChunk.Len() > 0 && currentChunk.Len()+len(line)+1 > charLimit && currentChunk.Len() > charLimit/2 { // +1 for newline, ensure chunk is reasonably large
+					chunks = append(chunks, currentChunk.String())
+					currentChunk.Reset()
+				}
+				if currentChunk.Len() > 0 {
+					currentChunk.WriteString("\n")
+				}
+				currentChunk.WriteString(line)
+
+				// If a line itself is very long, make it its own chunk (or split it further - current: own chunk)
+				if currentChunk.Len() > charLimit {
+					chunks = append(chunks, currentChunk.String())
+					currentChunk.Reset()
+				}
+			}
+			if currentChunk.Len() > 0 {
+				chunks = append(chunks, currentChunk.String())
+			}
+		} else {
+			log.Printf("RAG Indexer: MaxChunkSizeTokens not configured or is 0 for %s. Falling back to paragraph splitting.", path)
+			// Fallback to basic newline splitting (paragraphs)
+			chunks = strings.Split(string(content), "\n\n")
+			if len(chunks) == 0 && len(content) > 0 {
+				chunks = []string{string(content)}
+			}
+		}
+
+		if len(chunks) == 0 && len(content) > 0 { // Ensure at least one chunk if content exists
+			log.Printf("RAG Indexer: Warning - No chunks created for %s despite content. Adding entire content as one chunk.", path)
 			chunks = []string{string(content)}
 		}
 
+		log.Printf("RAG Indexer: File %s split into %d chunks.", path, len(chunks))
 
 		for chunkIndex, chunkText := range chunks {
-			if strings.TrimSpace(chunkText) == "" {
+			trimmedChunkText := strings.TrimSpace(chunkText)
+			if trimmedChunkText == "" {
 				continue
 			}
 
 			// Embedding Generation
-			embedding, err := i.generateEmbedding(context.Background(), chunkText) // Using context.Background() for now
+			embedding, err := i.generateEmbedding(context.Background(), trimmedChunkText)
 			if err != nil {
 				log.Printf("Error generating embedding for chunk %d of %s: %v. Skipping chunk.", chunkIndex+1, path, err)
-				continue // Skip this chunk
+				continue
 			}
 			if len(embedding) != EmbeddingDimension {
 				log.Printf("Warning: Embedding dimension mismatch for chunk %d of %s. Expected %d, got %d. Skipping chunk.", chunkIndex+1, path, EmbeddingDimension, len(embedding))
-				// This could happen if a different model was somehow used or API changed.
 				continue
 			}
-
 
 			docID := uuid.NewString()
 			indexedDoc := IndexedDocument{
 				ID:          docID,
 				FilePath:    path,
 				ContentHash: contentHash, // File-level hash for all chunks of this file
-				TextChunk:   chunkText,
+				TextChunk:   trimmedChunkText, // Use trimmed chunk
 				Embedding:   embedding,
 				IndexedAt:   time.Now().UTC(),
 				Metadata: map[string]interface{}{

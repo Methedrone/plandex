@@ -86,15 +86,32 @@ func HandleIndexProject(w http.ResponseWriter, r *http.Request) {
 	log.Printf("OpenAI client initialized for project %s", projectID)
 
 	// Indexer Config
-	// TODO: Make this configurable per project or globally
+	// Indexer Config
+	// Fetch RAG settings from plan configuration (or use defaults)
+	planConfig, err := db.GetPlanSettings(plan, true) // plan is from client_helper.GetPlanFromRequest
+	if err != nil {
+		log.Printf("Warning: Could not fetch plan settings for project %s to configure RAG indexer: %v. Using default indexer settings.", projectID, err)
+		planConfig = &shared.PlanConfig{} // Use empty config, defaults will apply
+	}
+
+	var ragChunkSizeTokens int = 512 // Default chunk size
+	if planConfig.RAGSettings != nil && planConfig.RAGSettings.ChunkSizeTokens > 0 {
+		ragChunkSizeTokens = planConfig.RAGSettings.ChunkSizeTokens
+		log.Printf("RAG: Using ChunkSizeTokens from plan config: %d", ragChunkSizeTokens)
+	} else {
+		log.Printf("RAG: Using default ChunkSizeTokens: %d", ragChunkSizeTokens)
+	}
+
+	// TODO: Make AllowedFileExtensions configurable as well if needed
 	config := rag.IndexerConfig{
 		AllowedFileExtensions: []string{".go", ".md", ".txt", ".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".html", ".css", ".json", ".yaml", ".yml"},
-		MaxChunkSizeTokens:    512, // This is a placeholder; actual token counting for chunking is not yet implemented
-		EmbeddingModelName:    string(openai.AdaEmbeddingV2), // Explicitly use the model name string
+		MaxChunkSizeTokens:    ragChunkSizeTokens,
+		EmbeddingModelName:    string(openai.AdaEmbeddingV2), // TODO: Make EmbeddingModelName configurable from RAGSettings
 	}
 	log.Printf("Indexer configuration set for project %s: %+v", projectID, config)
 
 	// Create Indexer
+	// The NewIndexer function signature was: NewIndexer(store VectorStore, config IndexerConfig, openAIClient *openai.Client)
 	indexer := rag.NewIndexer(store, config, openAIClient)
 	log.Printf("Indexer created for project %s", projectID)
 

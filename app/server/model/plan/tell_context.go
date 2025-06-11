@@ -135,26 +135,34 @@ func (state *activeTellStreamState) formatModelContext(params formatModelContext
 	if ragEnabledInConfig && state.ragVectorStore != nil {
 		currentUserQuery := state.userPrompt // Or state.req.Prompt, if more suitable
 		if currentUserQuery != "" {
-			log.Printf("RAG: RAG is enabled. Attempting retrieval for query: %s", currentUserQuery)
-			// TODO: Make topN and embeddingModelName configurable, possibly from state.settings or a dedicated RAG config.
-			topN := 3
-			embeddingModelName := string(openai.AdaEmbeddingV2) // Default, should align with indexer.
+			// Determine TopN for retrieval
+			configuredTopN := 3 // Default TopN
+			if state.settings.RAGSettings != nil && state.settings.RAGSettings.TopN > 0 {
+				configuredTopN = state.settings.RAGSettings.TopN
+				log.Printf("RAG: Using TopN from plan config: %d", configuredTopN)
+			} else {
+				log.Printf("RAG: Using default TopN: %d", configuredTopN)
+			}
 
-			// Use state.activePlan.Ctx for the context of the retrieval operation.
-			// Ensure state.clients is correctly passed and handled in retrieveRelevantContext for OpenAI client.
-			retrievedDocs, err := retrieveRelevantContext(state.activePlan.Ctx, currentUserQuery, state.plan.ProjectId, state.clients, state.ragVectorStore, topN, embeddingModelName)
+			// TODO: Make embeddingModelName configurable from RAGSettings if it's added there.
+			// For now, it's hardcoded or uses a default in retrieveRelevantContext.
+			embeddingModelName := string(openai.AdaEmbeddingV2)
+			log.Printf("RAG: RAG is enabled. Attempting retrieval for query: '%s' with TopN: %d", currentUserQuery, configuredTopN)
+
+			retrievedDocs, err := retrieveRelevantContext(state.activePlan.Ctx, currentUserQuery, state.plan.ProjectId, state.clients, state.ragVectorStore, configuredTopN, embeddingModelName)
 			if err != nil {
 				log.Printf("RAG: Error during context retrieval: %v", err)
 			} else {
 				if len(retrievedDocs) > 0 {
 					log.Printf("RAG: Successfully retrieved %d documents.", len(retrievedDocs))
-					ragContextStrings = append(ragContextStrings, "### Retrieved Contextual Information (RAG) ###")
+					ragContextStrings = append(ragContextStrings, "### Context Retrieved from Project Files (RAG) ###\nThe following information was retrieved from your project files based on the current query and might be relevant. Use it to inform your response:")
 					for _, doc := range retrievedDocs {
-						formattedDoc := fmt.Sprintf("Retrieved context from file `%s`:\n---\n%s\n---", doc.FilePath, doc.TextChunk)
+						// Using a slightly more distinct separator for individual RAG items
+						formattedDoc := fmt.Sprintf("\n<PlandexRAGSource file=\"%s\">\n%s\n</PlandexRAGSource>", doc.FilePath, doc.TextChunk)
 						ragContextStrings = append(ragContextStrings, formattedDoc)
-						chunkTokenCount := shared.GetNumTokensEstimate(formattedDoc)
+						chunkTokenCount := shared.GetNumTokensEstimate(formattedDoc) // Estimate tokens for the new format
 						ragTokenCount += chunkTokenCount
-						log.Printf("RAG: Adding retrieved doc ID %s, Path: %s. Chunk tokens: %d", doc.ID, doc.FilePath, chunkTokenCount)
+						log.Printf("RAG: Adding retrieved doc ID %s, Path: %s. Chunk tokens (new format): %d", doc.ID, doc.FilePath, chunkTokenCount)
 					}
 					ragContextStrings = append(ragContextStrings, "### End of Retrieved Contextual Information (RAG) ###")
 					log.Printf("RAG: Total tokens added from RAG context: %d", ragTokenCount)

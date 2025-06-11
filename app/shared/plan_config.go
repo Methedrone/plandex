@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strconv" // Added for Itoa
 	"strings"
 )
 
@@ -488,6 +489,59 @@ var ConfigSettingsByKey = map[string]ConfigSetting{
 		},
 		SortKey: "10_rag", // Example sort key, adjust as needed
 	},
+	"mcpenabled": {
+		Name: "MCP Enabled",
+		Desc: "Enable/disable Model Context Protocol (tool usage) features.",
+		BoolSetter: func(p *PlanConfig, enabled bool) {
+			if p.MCPSettings == nil {
+				p.MCPSettings = &MCPConfig{}
+			}
+			p.MCPSettings.Enabled = enabled
+			// Note: This doesn't automatically set AutoMode to Custom.
+			// Similar to RAG, this is an independent setting for now.
+		},
+		Getter: func(p *PlanConfig) string { // Getter used by `plandex config` display
+			if p.MCPSettings != nil && p.MCPSettings.Enabled {
+				return "Enabled"
+			}
+			return "Disabled"
+		},
+		SortKey: "11_mcp", // Following RAG's sort key
+	},
+	"ragtopn": {
+		Name: "RAG Top N",
+		Desc: "Number of top relevant chunks to retrieve for RAG. (Default: 3)",
+		IntSetter: func(p *PlanConfig, val int) {
+			if p.RAGSettings == nil {
+				p.RAGSettings = &RAGConfig{}
+			}
+			p.RAGSettings.TopN = val
+		},
+		Getter: func(p *PlanConfig) string {
+			if p.RAGSettings != nil && p.RAGSettings.TopN > 0 {
+				return strconv.Itoa(p.RAGSettings.TopN)
+			}
+			return "Default (3)" // Reflects typical default
+		},
+		SortKey: "RAG_01_TopN", // Standardized sort key
+	},
+	"ragchunksizetokens": {
+		Name: "RAG Chunk Size Tokens",
+		Desc: "Approximate number of tokens per chunk for RAG indexing. (Default: 512)",
+		IntSetter: func(p *PlanConfig, val int) {
+			if p.RAGSettings == nil {
+				p.RAGSettings = &RAGConfig{}
+			}
+			p.RAGSettings.ChunkSizeTokens = val
+		},
+		Getter: func(p *PlanConfig) string {
+			if p.RAGSettings != nil && p.RAGSettings.ChunkSizeTokens > 0 {
+				return strconv.Itoa(p.RAGSettings.ChunkSizeTokens)
+			}
+			return "Default (512)" // Reflects typical default
+		},
+		SortKey: "RAG_02_ChunkSizeTokens",
+	},
 }
 
 func init() {
@@ -503,6 +557,7 @@ func init() {
 
 // RAGConfig holds settings related to Retrieval Augmented Generation.
 type RAGConfig struct {
-	Enabled bool `json:"enabled"`
-	// Potentially add TopN, ChunkSize, etc. here later
+	Enabled         bool `json:"enabled"`
+	TopN            int  `json:"topN,omitempty"`            // Number of top relevant chunks to retrieve. Defaults to a value like 3 if 0.
+	ChunkSizeTokens int  `json:"chunkSizeTokens,omitempty"` // Approximate number of tokens per chunk for indexing. Defaults to a value like 512 if 0.
 }
