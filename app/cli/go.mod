@@ -1,6 +1,6 @@
 module plandex-cli
 
-go 1.23.3
+go 1.23.10
 
 require (
 	github.com/charmbracelet/lipgloss v1.0.0

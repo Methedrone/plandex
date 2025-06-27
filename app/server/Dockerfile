@@ -1,4 +1,4 @@
-FROM golang:1.23.3
+FROM golang:1.23.10-alpine AS builder
 
 # Update and install necessary packages including build tools for Tree-sitter
 RUN apt-get update && \
