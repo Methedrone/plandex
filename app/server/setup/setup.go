@@ -11,6 +11,7 @@ import (
 	"plandex-server/host"
 	"plandex-server/model/plan"
 	"plandex-server/notify"
+	"plandex-server/security"
 	"plandex-server/shutdown"
 	"runtime/debug"
 	"syscall"
@@ -87,11 +88,16 @@ func StartServer(handler http.Handler, configureFn func(handler http.Handler) ht
 		externalPort = "8099"
 	}
 
-	// Add logging middleware before the maxBytes middleware
+	// Add logging middleware first
 	handler = loggingMiddleware(handler)
 
-	// Apply the maxBytesMiddleware to limit request size to 1 GB
-	handler = maxBytesMiddleware(handler, 1000<<20) // 1 GB limit
+	// Apply comprehensive security middleware (CRITICAL for Phase 1 security)
+	securityConfig := security.DefaultSecurityConfig()
+	securityMiddleware := security.NewSecurityMiddleware(securityConfig)
+	handler = securityMiddleware.Apply(handler)
+
+	// Apply the maxBytesMiddleware to limit request size (reduced to 10MB for security)
+	handler = maxBytesMiddleware(handler, 10<<20) // 10 MB limit (reduced from 1GB)
 
 	if configureFn != nil {
 		handler = configureFn(handler)
