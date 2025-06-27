@@ -212,7 +212,7 @@ func SetAuthCookieIfBrowser(w http.ResponseWriter, r *http.Request, user *db.Use
 		Expires:  time.Now().Add(time.Hour * 24 * 90),
 	}
 
-	log.Println("setting auth cookie", cookie)
+	log.Println("setting auth cookie for browser session")
 
 	http.SetCookie(w, cookie)
 

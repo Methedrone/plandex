@@ -112,7 +112,7 @@ func CreateChatCompletionStream(
 			fmt.Println("using missing key fallback")
 			return CreateChatCompletionStream(clients, modelConfig.MissingKeyFallback, ctx, req)
 		}
-		return nil, fmt.Errorf("client not found for api key env var: %s", modelConfig.BaseModelConfig.ApiKeyEnvVar)
+		return nil, fmt.Errorf("client not found for configured API key")
 	}
 
 	resolveReq(&req, modelConfig)
@@ -154,10 +154,10 @@ func CreateChatCompletionStream(
 				resolvedModelConfig = resolvedModelConfig.MissingKeyFallback
 				opClient, ok = clients[resolvedModelConfig.BaseModelConfig.ApiKeyEnvVar]
 				if !ok {
-					return nil, fallbackRes, fmt.Errorf("client not found for api key env var: %s", resolvedModelConfig.BaseModelConfig.ApiKeyEnvVar)
+					return nil, fallbackRes, fmt.Errorf("client not found for configured API key")
 				}
 			} else {
-				return nil, fallbackRes, fmt.Errorf("client not found for api key env var: %s", resolvedModelConfig.BaseModelConfig.ApiKeyEnvVar)
+				return nil, fallbackRes, fmt.Errorf("client not found for configured API key")
 			}
 		}
 

@@ -58,8 +58,8 @@ func Connect() error {
 		Conn.SetMaxOpenConns(50)
 		Conn.SetMaxIdleConns(20)
 	} else {
-		Conn.SetMaxOpenConns(10)
-		Conn.SetMaxIdleConns(5)
+		Conn.SetMaxOpenConns(8)
+		Conn.SetMaxIdleConns(4)
 	}
 
 	// Verify settings

@@ -152,8 +152,9 @@ func (sm *SecurityMiddleware) inputValidationMiddleware(next http.Handler) http.
 			return
 		}
 		
-		// Basic path traversal protection
+		// Path traversal protection: detects .. path traversal combined with // double slash patterns leading to Invalid path error response
 		if strings.Contains(r.URL.Path, "..") || strings.Contains(r.URL.Path, "//") {
+			sm.logger.LogSecurityEvent("Path traversal attempt detected", r.URL.Path)
 			http.Error(w, "Invalid path", http.StatusBadRequest)
 			return
 		}
