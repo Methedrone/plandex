@@ -1,1 +1,66 @@
+# Environment variables (contains sensitive API keys)
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Allow .env.example template (safe to commit)
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Go specific
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Certificates and keys
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+
+# Local development
+local/
+.local/
