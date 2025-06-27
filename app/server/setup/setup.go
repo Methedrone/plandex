@@ -49,6 +49,9 @@ func RegisterShutdownHook(hook func()) {
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
+	// Initialize secure logger
+	secureLogger := security.NewSecureLogger(os.Getenv("GOENV") == "development")
+	
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip logging for monitoring endpoints
 		if r.URL.Path == "/health" || r.URL.Path == "/version" {
@@ -57,10 +60,13 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		}
 
 		start := time.Now()
-
-		log.Printf("\n\nRequest: %s %s\n\n", r.Method, r.URL.Path)
+		
+		// Use secure logging that sanitizes URLs and removes sensitive data
 		next.ServeHTTP(w, r)
-		log.Printf("\n\nCompleted: %s %s in %v\n\n", r.Method, r.URL.Path, time.Since(start))
+		duration := time.Since(start)
+		
+		// Secure request logging without exposing sensitive information
+		secureLogger.LogRequest(r, duration)
 	})
 }
 

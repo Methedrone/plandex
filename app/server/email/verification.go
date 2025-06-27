@@ -30,7 +30,7 @@ func SendVerificationEmail(email string, pin string) error {
 
 	if os.Getenv("GOENV") == "development" {
 		// Development environment
-		log.Printf("Development mode: Verification pin is %s for email %s", pin, email)
+		log.Printf("Development mode: Verification pin sent for email %s", email)
 
 		// Copy pin to clipboard
 		clipboard.WriteAll(pin) // ignore error

@@ -586,7 +586,10 @@ func execAuthenticate(w http.ResponseWriter, r *http.Request, requireOrg bool, r
 		return nil
 	}
 
-	log.Printf("UserId: %s, Email: %s, OrgId: %s\n", authToken.UserId, user.Email, parsed.OrgId)
+	// Secure logging: mask sensitive user information
+	maskedUserID := "user-" + authToken.UserId[:4] + "***"
+	maskedOrgID := "org-" + parsed.OrgId[:4] + "***"
+	log.Printf("Authentication successful - User: %s, Org: %s", maskedUserID, maskedOrgID)
 
 	return auth
 

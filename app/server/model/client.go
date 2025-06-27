@@ -107,7 +107,7 @@ func CreateChatCompletionStream(
 ) (*ExtendedChatCompletionStream, error) {
 	_, ok := clients[modelConfig.BaseModelConfig.ApiKeyEnvVar]
 	if !ok {
-		fmt.Printf("client not found for api key env var: %s", modelConfig.BaseModelConfig.ApiKeyEnvVar)
+		fmt.Printf("client not found for configured model")
 		if modelConfig.MissingKeyFallback != nil {
 			fmt.Println("using missing key fallback")
 			return CreateChatCompletionStream(clients, modelConfig.MissingKeyFallback, ctx, req)
