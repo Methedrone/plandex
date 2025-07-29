@@ -84,6 +84,8 @@ func getOnApplyExecFail(applyFlags types.ApplyFlags, tellFlags types.TellFlags, 
 						term.OutputErrorAndExit("failed to update plan config: %s", apiErr)
 					}
 
+					lib.SetCachedPlanConfig(config)
+
 					applyFlags.AutoCommit = true
 					applyFlags.AutoConfirm = true
 					applyFlags.AutoExec = true
@@ -118,10 +120,8 @@ func getOnApplyExecFail(applyFlags types.ApplyFlags, tellFlags types.TellFlags, 
 				lib.Rollback(toRollback, true)
 			}
 
-			var apiKeys map[string]string
-			if !auth.Current.IntegratedModelsMode {
-				apiKeys = lib.MustVerifyApiKeysSilent()
-			}
+			authVars := lib.MustVerifyAuthVarsSilent(auth.Current.IntegratedModelsMode)
+
 			prompt := fmt.Sprintf("Execution failed with exit status %d. Output:\n\n%s\n\n--\n\n",
 				status, output)
 
@@ -142,7 +142,7 @@ func getOnApplyExecFail(applyFlags types.ApplyFlags, tellFlags types.TellFlags, 
 			TellPlan(ExecParams{
 				CurrentPlanId: lib.CurrentPlanId,
 				CurrentBranch: lib.CurrentBranch,
-				ApiKeys:       apiKeys,
+				AuthVars:      authVars,
 				CheckOutdatedContext: func(maybeContexts []*shared.Context, projectPaths *types.ProjectPaths) (bool, bool, error) {
 					return lib.CheckOutdatedContextWithOutput(true, true, maybeContexts, projectPaths)
 				},

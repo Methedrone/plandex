@@ -62,11 +62,7 @@ func init() {
 }
 
 func setReplConfig() {
-	res, apiErr := api.Client.GetPlanConfig(lib.CurrentPlanId)
-	if apiErr != nil {
-		term.OutputErrorAndExit("Error getting plan config: %v", apiErr.Msg)
-	}
-	replConfig = res
+	replConfig = lib.MustGetCurrentPlanConfig()
 }
 
 func runRepl(cmd *cobra.Command, args []string) {
@@ -130,8 +126,16 @@ func runRepl(cmd *cobra.Command, args []string) {
 			args = append(args, "--daily")
 		} else if reasoningModels {
 			args = append(args, "--reasoning")
-		} else if geminiPreviewModels {
-			args = append(args, "--gemini-preview")
+		} else if geminiPlannerModels {
+			args = append(args, "--gemini-planner")
+		} else if o3PlannerModels {
+			args = append(args, "--o3-planner")
+		} else if r1PlannerModels {
+			args = append(args, "--r1-planner")
+		} else if perplexityPlannerModels {
+			args = append(args, "--perplexity-planner")
+		} else if opusPlannerModels {
+			args = append(args, "--opus-planner")
 		}
 
 		newCmd.Run(newCmd, args)
@@ -139,16 +143,14 @@ func runRepl(cmd *cobra.Command, args []string) {
 		afterNew = true
 	}
 
-	if !auth.Current.IntegratedModelsMode {
-		lib.MustVerifyApiKeys()
-	}
+	setReplConfig()
+
+	lib.MustVerifyAuthVars(auth.Current.IntegratedModelsMode)
 
 	projectPaths, err = fs.GetProjectPaths(fs.Cwd)
 	if err != nil {
 		color.New(term.ColorHiRed).Printf("Error getting project paths: %v\n", err)
 	}
-
-	setReplConfig()
 
 	settings, apiErr := api.Client.GetSettings(lib.CurrentPlanId, lib.CurrentBranch)
 	if apiErr != nil {
@@ -184,7 +186,7 @@ func runRepl(cmd *cobra.Command, args []string) {
 		printAutoFn:  printAutoFn,
 		printModelFn: printModelFn,
 		config:       replConfig,
-		packName:     settings.ModelPack.Name,
+		packName:     settings.GetModelPack().Name,
 	})
 
 	var p *prompt.Prompt
@@ -479,6 +481,9 @@ func executor(in string, p *prompt.Prompt) {
 		if err != nil {
 			color.New(term.ColorHiRed).Printf("Error executing chat: %v\n", err)
 		}
+
+		replacer := strings.NewReplacer("'", "", "\"", "", "*", "", "`", "", "_", "")
+		output = replacer.Replace(output)
 
 		rx := regexp.MustCompile(`(?i)(switch|start|continue|begin|change|chang|move|proceed|go|transition)(ing)?( to | with | into )?(tell|implementation|coding|development)( mode)?`)
 

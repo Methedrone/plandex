@@ -13,6 +13,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Change to the script directory
 cd "$SCRIPT_DIR" || exit 1
 
+# Install Python deps
+"$SCRIPT_DIR/litellm_deps.sh"
+
+# Update PATH for python venv
+export PATH="$SCRIPT_DIR/../litellm-venv/bin:$PATH"
+
 # Detect if reflex is installed and install it if not
 if ! [ -x "$(command -v reflex)" ]; then
 
@@ -38,10 +44,14 @@ trap terminate SIGTERM SIGINT
 
 cd ../
 
+export DATABASE_URL=postgres://ds:@localhost/plandex_local?sslmode=disable
+export GOENV=development
+export LOCAL_MODE=1
+
 reflex -r '^(cli|shared)/.*\.(go|mod|sum)$' -- sh -c 'cd cli && ./dev.sh' &
 pid1=$!
 
-reflex -r '^(server|shared)/.*\.(go|mod|sum)$' -s -- sh -c 'cd server && go build && ./plandex-server' &
+reflex -r '^(server|shared)/.*\.(go|mod|sum|py)$' -s -- sh -c 'cd server && go build && ./plandex-server' &
 pid2=$!
 
 wait $pid1

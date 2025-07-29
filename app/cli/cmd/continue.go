@@ -36,29 +36,25 @@ func init() {
 func doContinue(cmd *cobra.Command, args []string) {
 	auth.MustResolveAuthWithOrg()
 	lib.MustResolveProject()
-	mustSetPlanExecFlags(cmd)
-
-	var apiKeys map[string]string
-	if !auth.Current.IntegratedModelsMode {
-		apiKeys = lib.MustVerifyApiKeys()
-	}
+	mustSetPlanExecFlags(cmd, false)
 
 	tellFlags := types.TellFlags{
-		TellBg:         tellBg,
-		TellStop:       tellStop,
-		TellNoBuild:    tellNoBuild,
-		IsUserContinue: true,
-		ExecEnabled:    !noExec,
-		AutoContext:    tellAutoContext,
-		SmartContext:   tellSmartContext,
-		AutoApply:      tellAutoApply,
-		IsChatOnly:     chatOnly,
+		TellBg:          tellBg,
+		TellStop:        tellStop,
+		TellNoBuild:     tellNoBuild,
+		IsUserContinue:  true,
+		ExecEnabled:     !noExec,
+		AutoContext:     tellAutoContext,
+		SmartContext:    tellSmartContext,
+		AutoApply:       tellAutoApply,
+		IsChatOnly:      chatOnly,
+		SkipChangesMenu: tellSkipMenu,
 	}
 
 	plan_exec.TellPlan(plan_exec.ExecParams{
 		CurrentPlanId: lib.CurrentPlanId,
 		CurrentBranch: lib.CurrentBranch,
-		ApiKeys:       apiKeys,
+		AuthVars:      lib.MustVerifyAuthVars(auth.Current.IntegratedModelsMode),
 		CheckOutdatedContext: func(maybeContexts []*shared.Context, projectPaths *types.ProjectPaths) (bool, bool, error) {
 			auto := autoConfirm || tellAutoApply || tellAutoContext
 

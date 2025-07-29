@@ -44,7 +44,7 @@ func init() {
 func doDebug(cmd *cobra.Command, args []string) {
 	auth.MustResolveAuthWithOrg()
 	lib.MustResolveProject()
-	mustSetPlanExecFlags(cmd)
+	mustSetPlanExecFlags(cmd, false)
 
 	if lib.CurrentPlanId == "" {
 		term.OutputNoCurrentPlanErrorAndExit()
@@ -64,11 +64,6 @@ func doDebug(cmd *cobra.Command, args []string) {
 		if len(cmdArgs) == 0 {
 			term.OutputErrorAndExit("No command specified")
 		}
-	}
-
-	var apiKeys map[string]string
-	if !auth.Current.IntegratedModelsMode {
-		apiKeys = lib.MustVerifyApiKeys()
 	}
 
 	// Get current working directory
@@ -248,7 +243,7 @@ func doDebug(cmd *cobra.Command, args []string) {
 		plan_exec.TellPlan(plan_exec.ExecParams{
 			CurrentPlanId: lib.CurrentPlanId,
 			CurrentBranch: lib.CurrentBranch,
-			ApiKeys:       apiKeys,
+			AuthVars:      lib.MustVerifyAuthVars(auth.Current.IntegratedModelsMode),
 			CheckOutdatedContext: func(maybeContexts []*shared.Context, projectPaths *types.ProjectPaths) (bool, bool, error) {
 				return lib.CheckOutdatedContextWithOutput(true, true, maybeContexts, projectPaths)
 			},

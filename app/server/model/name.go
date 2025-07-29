@@ -18,18 +18,22 @@ func GenPlanName(
 	auth *types.ServerAuth,
 	plan *db.Plan,
 	settings *shared.PlanSettings,
+	orgUserConfig *shared.OrgUserConfig,
 	clients map[string]ClientInfo,
+	authVars map[string]string,
 	planContent string,
 	sessionId string,
 	ctx context.Context,
 ) (string, error) {
-	config := settings.ModelPack.Namer
+	config := settings.GetModelPack().Namer
 
 	var tools []openai.Tool
 	var toolChoice *openai.ToolChoice
 
+	baseModelConfig := config.GetBaseModelConfig(authVars, settings, orgUserConfig)
+
 	var sysPrompt string
-	if config.BaseModelConfig.PreferredModelOutputFormat == shared.ModelOutputFormatXml {
+	if baseModelConfig.PreferredOutputFormat == shared.ModelOutputFormatXml {
 		sysPrompt = prompts.SysPlanNameXml
 	} else {
 		sysPrompt = prompts.SysPlanName
@@ -63,15 +67,18 @@ func GenPlanName(
 	}
 
 	modelRes, err := ModelRequest(ctx, ModelRequestParams{
-		Clients:     clients,
-		Auth:        auth,
-		Plan:        plan,
-		ModelConfig: &config,
-		Purpose:     "Plan name",
-		Messages:    messages,
-		Tools:       tools,
-		ToolChoice:  toolChoice,
-		SessionId:   sessionId,
+		Clients:       clients,
+		AuthVars:      authVars,
+		Auth:          auth,
+		Plan:          plan,
+		ModelConfig:   &config,
+		OrgUserConfig: orgUserConfig,
+		Purpose:       "Plan name",
+		Messages:      messages,
+		Tools:         tools,
+		ToolChoice:    toolChoice,
+		SessionId:     sessionId,
+		Settings:      settings,
 	})
 
 	if err != nil {
@@ -82,7 +89,7 @@ func GenPlanName(
 	var planName string
 	content := modelRes.Content
 
-	if config.BaseModelConfig.PreferredModelOutputFormat == shared.ModelOutputFormatXml {
+	if baseModelConfig.PreferredOutputFormat == shared.ModelOutputFormatXml {
 		planName = utils.GetXMLContent(content, "planName")
 		if planName == "" {
 			return "", fmt.Errorf("No planName tag found in XML response")
@@ -105,22 +112,40 @@ func GenPlanName(
 	return planName, nil
 }
 
+type GenPipedDataNameParams struct {
+	Ctx           context.Context
+	Auth          *types.ServerAuth
+	Plan          *db.Plan
+	Settings      *shared.PlanSettings
+	OrgUserConfig *shared.OrgUserConfig
+	AuthVars      map[string]string
+	SessionId     string
+	Clients       map[string]ClientInfo
+	PipedContent  string
+}
+
 func GenPipedDataName(
-	ctx context.Context,
-	auth *types.ServerAuth,
-	plan *db.Plan,
-	settings *shared.PlanSettings,
-	clients map[string]ClientInfo,
-	pipedContent string,
-	sessionId string,
+	params GenPipedDataNameParams,
 ) (string, error) {
-	config := settings.ModelPack.Namer
+	ctx := params.Ctx
+	auth := params.Auth
+	plan := params.Plan
+	settings := params.Settings
+	clients := params.Clients
+	authVars := params.AuthVars
+	pipedContent := params.PipedContent
+	sessionId := params.SessionId
+	orgUserConfig := params.OrgUserConfig
+
+	config := settings.GetModelPack().Namer
 
 	var sysPrompt string
 	var tools []openai.Tool
 	var toolChoice *openai.ToolChoice
 
-	if config.BaseModelConfig.PreferredModelOutputFormat == shared.ModelOutputFormatXml {
+	baseModelConfig := config.GetBaseModelConfig(authVars, settings, orgUserConfig)
+
+	if baseModelConfig.PreferredOutputFormat == shared.ModelOutputFormatXml {
 		sysPrompt = prompts.SysPipedDataNameXml
 	} else {
 		sysPrompt = prompts.SysPipedDataName
@@ -154,15 +179,18 @@ func GenPipedDataName(
 	}
 
 	modelRes, err := ModelRequest(ctx, ModelRequestParams{
-		Clients:     clients,
-		Auth:        auth,
-		Plan:        plan,
-		ModelConfig: &config,
-		Purpose:     "Piped data name",
-		Messages:    messages,
-		Tools:       tools,
-		ToolChoice:  toolChoice,
-		SessionId:   sessionId,
+		Clients:       clients,
+		Auth:          auth,
+		AuthVars:      authVars,
+		Plan:          plan,
+		ModelConfig:   &config,
+		Purpose:       "Piped data name",
+		Messages:      messages,
+		Tools:         tools,
+		ToolChoice:    toolChoice,
+		SessionId:     sessionId,
+		Settings:      settings,
+		OrgUserConfig: orgUserConfig,
 	})
 
 	if err != nil {
@@ -173,7 +201,7 @@ func GenPipedDataName(
 	var name string
 	content := modelRes.Content
 
-	if config.BaseModelConfig.PreferredModelOutputFormat == shared.ModelOutputFormatXml {
+	if baseModelConfig.PreferredOutputFormat == shared.ModelOutputFormatXml {
 		name = utils.GetXMLContent(content, "name")
 		if name == "" {
 			return "", fmt.Errorf("No name tag found in XML response")
@@ -201,17 +229,21 @@ func GenNoteName(
 	auth *types.ServerAuth,
 	plan *db.Plan,
 	settings *shared.PlanSettings,
+	orgUserConfig *shared.OrgUserConfig,
 	clients map[string]ClientInfo,
+	authVars map[string]string,
 	note string,
 	sessionId string,
 ) (string, error) {
-	config := settings.ModelPack.Namer
+	config := settings.GetModelPack().Namer
 
 	var sysPrompt string
 	var tools []openai.Tool
 	var toolChoice *openai.ToolChoice
 
-	if config.BaseModelConfig.PreferredModelOutputFormat == shared.ModelOutputFormatXml {
+	baseModelConfig := config.GetBaseModelConfig(authVars, settings, orgUserConfig)
+
+	if baseModelConfig.PreferredOutputFormat == shared.ModelOutputFormatXml {
 		sysPrompt = prompts.SysNoteNameXml
 	} else {
 		sysPrompt = prompts.SysNoteName
@@ -245,15 +277,18 @@ func GenNoteName(
 	}
 
 	modelRes, err := ModelRequest(ctx, ModelRequestParams{
-		Clients:     clients,
-		Auth:        auth,
-		Plan:        plan,
-		ModelConfig: &config,
-		Purpose:     "Note name",
-		Messages:    messages,
-		Tools:       tools,
-		ToolChoice:  toolChoice,
-		SessionId:   sessionId,
+		Clients:       clients,
+		Auth:          auth,
+		AuthVars:      authVars,
+		Plan:          plan,
+		ModelConfig:   &config,
+		Purpose:       "Note name",
+		Messages:      messages,
+		Tools:         tools,
+		ToolChoice:    toolChoice,
+		SessionId:     sessionId,
+		Settings:      settings,
+		OrgUserConfig: orgUserConfig,
 	})
 
 	if err != nil {
@@ -264,7 +299,7 @@ func GenNoteName(
 	var name string
 	content := modelRes.Content
 
-	if config.BaseModelConfig.PreferredModelOutputFormat == shared.ModelOutputFormatXml {
+	if baseModelConfig.PreferredOutputFormat == shared.ModelOutputFormatXml {
 		name = utils.GetXMLContent(content, "name")
 		if name == "" {
 			return "", fmt.Errorf("No name tag found in XML response")

@@ -58,6 +58,13 @@ func MustApplyPlanAttempt(
 
 	term.StartSpinner("")
 
+	err := PromptSyncModelsIfNeeded()
+	if err != nil {
+		term.OutputErrorAndExit("Error syncing models: %v", err)
+	}
+
+	term.StartSpinner("")
+
 	currentPlanState, apiErr := api.Client.GetCurrentPlanState(planId, branch)
 
 	if apiErr != nil {
@@ -567,26 +574,14 @@ func execApplyScript(
 }
 
 func apiApplyPlan(planId, branch string) (string, error) {
-	log.Println("Getting API keys")
-
-	var apiKeys map[string]string
-	if !auth.Current.IntegratedModelsMode {
-		apiKeys = MustVerifyApiKeysSilent()
-	}
+	authVars := MustVerifyAuthVarsSilent(auth.Current.IntegratedModelsMode)
 
 	var commitSummary string
-
-	openAIBase := os.Getenv("OPENAI_API_BASE")
-	if openAIBase == "" {
-		openAIBase = os.Getenv("OPENAI_ENDPOINT")
-	}
 
 	log.Println("Applying plan with API call")
 
 	commitSummary, apiErr := api.Client.ApplyPlan(planId, branch, shared.ApplyPlanRequest{
-		ApiKeys:     apiKeys,
-		OpenAIBase:  openAIBase,
-		OpenAIOrgId: os.Getenv("OPENAI_ORG_ID"),
+		AuthVars: authVars,
 	})
 
 	if apiErr != nil {

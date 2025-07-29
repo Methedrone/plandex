@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"plandex-cli/api"
 	"plandex-cli/lib"
 	"plandex-cli/term"
 	"strconv"
@@ -31,10 +30,11 @@ var tellNoBuild bool
 var tellAutoApply bool
 var tellAutoContext bool
 var tellSmartContext bool
+var tellSkipMenu bool
 var noExec bool
 var autoDebug int
 
-var editor string
+var editor = EditorTypeVim // default to vim
 var editorSetByFlag bool
 
 func init() {
@@ -58,6 +58,7 @@ type initExecFlagsParams struct {
 	omitExec         bool
 	omitAutoContext  bool
 	omitSmartContext bool
+	omitSkipMenu     bool
 }
 
 func initExecFlags(cmd *cobra.Command, params initExecFlagsParams) {
@@ -100,6 +101,10 @@ func initExecFlags(cmd *cobra.Command, params initExecFlagsParams) {
 		cmd.Flags().Var(newEditorValue(&editor), "editor", "Write prompt in system editor")
 		cmd.Flag("editor").NoOptDefVal = defaultEditor
 	}
+
+	if !params.omitSkipMenu {
+		cmd.Flags().BoolVar(&tellSkipMenu, "skip-menu", false, shared.ConfigSettingsByKey["skip-changes-menu"].Desc)
+	}
 }
 
 func initApplyFlags(cmd *cobra.Command, applyFlag bool) {
@@ -123,19 +128,7 @@ func initExecScriptFlags(cmd *cobra.Command) {
 	cmd.Flag("debug").NoOptDefVal = strconv.Itoa(defaultAutoDebugTries)
 }
 
-func validatePlanExecFlags() {
-	if tellAutoApply && tellNoBuild {
-		term.OutputErrorAndExit("--apply can't be used with --no-build/-n")
-	}
-	if tellAutoApply && tellBg {
-		term.OutputErrorAndExit("--apply can't be used with --bg")
-	}
-	if autoExec && !tellAutoApply {
-		term.OutputErrorAndExit("--auto-exec can only be used with --apply")
-	}
-	if autoDebug > 0 && !tellAutoApply {
-		term.OutputErrorAndExit("--debug can only be used with --apply")
-	}
+func validatePlanExecFlags(isApply bool) {
 	if autoDebug > 0 && noExec {
 		term.OutputErrorAndExit("--debug can't be used with --no-exec")
 	}
@@ -143,24 +136,31 @@ func validatePlanExecFlags() {
 	if tellAutoContext && tellBg {
 		term.OutputErrorAndExit("--auto-context/-c can't be used with --bg")
 	}
+
+	if !isApply {
+		if autoDebug > 0 && !tellAutoApply {
+			term.OutputErrorAndExit("--debug can only be used with --apply")
+		}
+
+		if autoExec && !tellAutoApply {
+			term.OutputErrorAndExit("--auto-exec can only be used with --apply")
+		}
+
+		if tellAutoApply && tellNoBuild {
+			term.OutputErrorAndExit("--apply can't be used with --no-build/-n")
+		}
+		if tellAutoApply && tellBg {
+			term.OutputErrorAndExit("--apply can't be used with --bg")
+		}
+	}
 }
 
-func mustSetPlanExecFlags(cmd *cobra.Command) {
-	mustSetPlanExecFlagsWithConfig(cmd, nil)
-}
-
-func mustSetPlanExecFlagsWithConfig(cmd *cobra.Command, config *shared.PlanConfig) {
+func mustSetPlanExecFlags(cmd *cobra.Command, isApply bool) {
 	if lib.CurrentPlanId == "" {
 		term.OutputNoCurrentPlanErrorAndExit()
 	}
 
-	if config == nil {
-		var apiErr *shared.ApiError
-		config, apiErr = api.Client.GetPlanConfig(lib.CurrentPlanId)
-		if apiErr != nil {
-			term.OutputErrorAndExit("Error getting plan config: %v", apiErr)
-		}
-	}
+	config := lib.MustGetCurrentPlanConfig()
 
 	// Set flag vars from config when flags aren't explicitly set
 	if !cmd.Flags().Changed("stop") {
@@ -203,11 +203,19 @@ func mustSetPlanExecFlagsWithConfig(cmd *cobra.Command, config *shared.PlanConfi
 		}
 	}
 
-	if !editorSetByFlag {
+	if !cmd.Flags().Changed("skip-menu") {
+		tellSkipMenu = config.SkipChangesMenu
+	}
+
+	// tell command editor is no longer tied to config *unless* it's set to vim or nano
+	// otherwise, the flag or EDITOR env var are used
+	// config.Editor is now used for mainly for JSON editing (and perhaps other purposes)
+	// this is because it's pretty rare to use the editor for writing prompts now rather than the REPL
+	if !editorSetByFlag && (config.Editor == shared.EditorTypeVim || config.Editor == shared.EditorTypeNano) {
 		editor = config.Editor
 	}
 
-	validatePlanExecFlags()
+	validatePlanExecFlags(isApply)
 }
 
 // AutoDebugValue implements the flag.Value interface

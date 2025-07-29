@@ -30,15 +30,14 @@ func init() {
 	term.SetOpenUnauthenticatedCloudURLFn(ui.OpenUnauthenticatedCloudURL)
 	term.SetConvertTrialFn(auth.ConvertTrial)
 
+	plan_exec.SetPromptSyncModelsIfNeeded(lib.PromptSyncModelsIfNeeded)
+
 	lib.SetBuildPlanInlineFn(func(autoConfirm bool, maybeContexts []*shared.Context) (bool, error) {
-		var apiKeys map[string]string
-		if !auth.Current.IntegratedModelsMode {
-			apiKeys = lib.MustVerifyApiKeys()
-		}
+		authVars := lib.MustVerifyAuthVars(auth.Current.IntegratedModelsMode)
 		return plan_exec.Build(plan_exec.ExecParams{
 			CurrentPlanId: lib.CurrentPlanId,
 			CurrentBranch: lib.CurrentBranch,
-			ApiKeys:       apiKeys,
+			AuthVars:      authVars,
 			CheckOutdatedContext: func(maybeContexts []*shared.Context, projectPaths *types.ProjectPaths) (bool, bool, error) {
 				return lib.CheckOutdatedContextWithOutput(true, autoConfirm, maybeContexts, projectPaths)
 			},

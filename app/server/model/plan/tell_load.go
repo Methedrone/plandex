@@ -19,6 +19,7 @@ import (
 
 func (state *activeTellStreamState) loadTellPlan() error {
 	clients := state.clients
+	authVars := state.authVars
 	req := state.req
 	auth := state.auth
 	plan := state.plan
@@ -46,6 +47,7 @@ func (state *activeTellStreamState) loadTellPlan() error {
 	var summaries []*db.ConvoSummary
 	var subtasks []*db.Subtask
 	var settings *shared.PlanSettings
+	var orgUserConfig *shared.OrgUserConfig
 	var latestSummaryTokens int
 	var currentPlan *shared.CurrentPlanState
 
@@ -68,12 +70,12 @@ func (state *activeTellStreamState) loadTellPlan() error {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("panic in getPlanSettings: %v\n%s", r, debug.Stack())
-					errCh <- fmt.Errorf("error getting plan settings: %v", r)
+					errCh <- fmt.Errorf("panic getting plan settings: %v\n%s", r, debug.Stack())
 					runtime.Goexit() // don't allow outer function to continue and double-send to channel
 				}
 			}()
 
-			res, err := db.GetPlanSettings(plan, true)
+			res, err := db.GetPlanSettings(plan)
 			if err != nil {
 				log.Printf("Error getting plan settings: %v\n", err)
 				errCh <- fmt.Errorf("error getting plan settings: %v", err)
@@ -81,12 +83,22 @@ func (state *activeTellStreamState) loadTellPlan() error {
 			}
 			settings = res
 
+			orgUserConfigRes, err := db.GetOrgUserConfig(auth.User.Id, auth.OrgId)
+			if err != nil {
+				log.Printf("Error getting org user config: %v\n", err)
+				errCh <- fmt.Errorf("error getting org user config: %v", err)
+				return
+			}
+			orgUserConfig = orgUserConfigRes
+
 			if plan.Name == "draft" {
 				name, err := model.GenPlanName(
 					auth,
 					plan,
 					settings,
+					orgUserConfig,
 					clients,
+					authVars,
 					req.Prompt,
 					active.SessionId,
 					active.Ctx,
@@ -281,7 +293,7 @@ func (state *activeTellStreamState) loadTellPlan() error {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("panic in getPlanSubtasks: %v\n%s", r, debug.Stack())
-					errCh <- fmt.Errorf("error getting plan subtasks: %v", r)
+					errCh <- fmt.Errorf("error getting plan subtasks: %v\n%s", r, debug.Stack())
 					runtime.Goexit() // don't allow outer function to continue and double-send to channel
 				}
 			}()
@@ -332,7 +344,7 @@ func (state *activeTellStreamState) loadTellPlan() error {
 		active.StreamDoneCh <- &shared.ApiError{
 			Type:   shared.ApiErrorTypeOther,
 			Status: http.StatusInternalServerError,
-			Msg:    "Error loading tell plan",
+			Msg:    fmt.Sprintf("Error loading tell plan: %v", err),
 		}
 		return err
 	}

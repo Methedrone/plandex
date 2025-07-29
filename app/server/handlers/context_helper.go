@@ -89,11 +89,13 @@ func loadContexts(
 
 	var settings *shared.PlanSettings
 	var clients map[string]model.ClientInfo
+	var authVars map[string]string
+	var orgUserConfig *shared.OrgUserConfig
 
 	for _, context := range *loadReq {
 		if context.ContextType == shared.ContextPipedDataType || context.ContextType == shared.ContextNoteType || context.ContextType == shared.ContextImageType {
 
-			settings, err = db.GetPlanSettings(plan, true)
+			settings, err = db.GetPlanSettings(plan)
 
 			if err != nil {
 				log.Printf("Error getting plan settings: %v\n", err)
@@ -101,16 +103,27 @@ func loadContexts(
 				return nil, nil
 			}
 
-			clients = initClients(
+			orgUserConfig, err = db.GetOrgUserConfig(auth.User.Id, auth.OrgId)
+			if err != nil {
+				log.Printf("Error getting org user config: %v\n", err)
+				http.Error(w, "Error getting org user config: "+err.Error(), http.StatusInternalServerError)
+				return nil, nil
+			}
+
+			res := initClients(
 				initClientsParams{
 					w:           w,
 					auth:        auth,
 					apiKeys:     context.ApiKeys,
-					openAIBase:  context.OpenAIBase,
 					openAIOrgId: context.OpenAIOrgId,
+					authVars:    context.AuthVars,
 					plan:        plan,
+					settings:    settings,
 				},
 			)
+
+			clients = res.clients
+			authVars = res.authVars
 
 			break
 		}
@@ -119,9 +132,9 @@ func loadContexts(
 	// ensure image compatibility if we're loading an image
 	for _, context := range *loadReq {
 		if context.ContextType == shared.ContextImageType {
-			if !settings.ModelPack.Planner.BaseModelConfig.HasImageSupport {
-				log.Printf("Error loading context: %s does not support images in context\n", settings.ModelPack.Planner.BaseModelConfig.ModelName)
-				http.Error(w, fmt.Sprintf("Error loading context: %s does not support images in context", settings.ModelPack.Planner.BaseModelConfig.ModelName), http.StatusBadRequest)
+			if !settings.GetModelPack().Planner.GetSharedBaseConfig(settings).HasImageSupport {
+				log.Printf("Error loading context: %s does not support images in context\n", settings.GetModelPack().Planner.ModelId)
+				http.Error(w, fmt.Sprintf("Error loading context: %s does not support images in context", settings.GetModelPack().Planner.ModelId), http.StatusBadRequest)
 				return nil, nil
 			}
 		}
@@ -143,7 +156,17 @@ func loadContexts(
 					}
 				}()
 
-				name, err := model.GenPipedDataName(r.Context(), auth, plan, settings, clients, context.Body, context.SessionId)
+				name, err := model.GenPipedDataName(model.GenPipedDataNameParams{
+					Ctx:           r.Context(),
+					Auth:          auth,
+					Plan:          plan,
+					Settings:      settings,
+					AuthVars:      authVars,
+					SessionId:     context.SessionId,
+					Clients:       clients,
+					PipedContent:  context.Body,
+					OrgUserConfig: orgUserConfig,
+				})
 
 				if err != nil {
 					errCh <- fmt.Errorf("error generating name for piped data: %v", err)
@@ -165,7 +188,7 @@ func loadContexts(
 					}
 				}()
 
-				name, err := model.GenNoteName(r.Context(), auth, plan, settings, clients, context.Body, context.SessionId)
+				name, err := model.GenNoteName(r.Context(), auth, plan, settings, orgUserConfig, clients, authVars, context.Body, context.SessionId)
 
 				if err != nil {
 					errCh <- fmt.Errorf("error generating name for note: %v", err)
