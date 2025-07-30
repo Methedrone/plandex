@@ -151,8 +151,13 @@ func (state *activeTellStreamState) checkNewSubtasks() []*db.Subtask {
 		}
 	}
 
-	// log.Println("state.subtasks:\n", spew.Sdump(state.subtasks))
-	log.Println("state.currentSubtask:\n", spew.Sdump(state.currentSubtask))
+	// Efficient subtask logging optimized for production performance  
+	if state.currentSubtask != nil {
+		log.Printf("Current subtask: %s (files: %d)", 
+			state.currentSubtask.Title, len(state.currentSubtask.UsesFiles))
+	} else {
+		log.Println("No current subtask")
+	}
 
 	return newSubtasks
 }
@@ -216,7 +221,10 @@ func (state *activeTellStreamState) checkRemoveSubtasks() []string {
 	for _, subtask := range removedSubtasks {
 		removedSubtaskTitles = append(removedSubtaskTitles, subtask.Title)
 	}
-	log.Println("removedSubtaskTitles:\n", spew.Sdump(removedSubtaskTitles))
+	// Efficient removed subtasks logging
+	if len(removedSubtaskTitles) > 0 {
+		log.Printf("Removed %d subtasks: %v", len(removedSubtaskTitles), removedSubtaskTitles)
+	}
 
 	return removedSubtaskTitles
 }

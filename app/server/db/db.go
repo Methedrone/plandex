@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
@@ -54,12 +55,18 @@ func Connect() error {
 
 	log.Println("connected to database")
 
+	// MacBook 2012 optimized connection pooling
 	if os.Getenv("GOENV") == "production" {
 		Conn.SetMaxOpenConns(50)
 		Conn.SetMaxIdleConns(20)
+		Conn.SetConnMaxLifetime(30 * time.Minute)
+		Conn.SetConnMaxIdleTime(5 * time.Minute)
 	} else {
-		Conn.SetMaxOpenConns(8)
-		Conn.SetMaxIdleConns(4)
+		// MacBook 2012 constraints: 4-8GB RAM, optimize for memory efficiency
+		Conn.SetMaxOpenConns(8)        // Conservative connection limit
+		Conn.SetMaxIdleConns(4)        // Keep fewer idle connections
+		Conn.SetConnMaxLifetime(15 * time.Minute)  // Shorter lifetime for development
+		Conn.SetConnMaxIdleTime(2 * time.Minute)   // Quicker idle cleanup
 	}
 
 	// Verify settings

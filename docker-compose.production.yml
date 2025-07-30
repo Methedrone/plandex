@@ -1,0 +1,314 @@
+# Production Docker Compose Configuration for PDw-X
+# Optimized for security, performance, and enterprise deployment
+
+services:
+  plandex-postgres:
+    image: postgres:17.5-alpine
+    restart: always
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_USER: plandex
+      POSTGRES_DB: plandex
+      POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      # Performance optimization
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_MAINTENANCE_WORK_MEM: 128MB
+      POSTGRES_WAL_BUFFERS: 16MB
+    ports:
+      - "127.0.0.1:5432:5432"  # Local binding only
+    volumes:
+      - plandex-db:/var/lib/postgresql/data:Z
+      - ./postgresql/postgresql.prod.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgresql/pg_hba.prod.conf:/etc/postgresql/pg_hba.conf:ro
+      - /dev/shm:/dev/shm
+    networks:
+      - plandex-network
+    secrets:
+      - postgres_password
+    command: >
+      postgres
+      -c config_file=/etc/postgresql/postgresql.conf
+      -c hba_file=/etc/postgresql/pg_hba.conf
+      -c ssl=on
+      -c ssl_cert_file=/etc/ssl/certs/server.crt
+      -c ssl_key_file=/etc/ssl/private/server.key
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plandex -d plandex"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    user: postgres
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/run/postgresql:noexec,nosuid,size=100m
+
+  plandex-server:
+    image: plandexai/plandex-server:latest
+    restart: always
+    volumes:
+      - plandex-files:/plandex-server:Z
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    ports:
+      - "127.0.0.1:8099:8099"
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      GOENV: production
+      LOCAL_MODE: 0
+      PLANDEX_BASE_DIR: /plandex-server
+      # Performance optimization
+      GOGC: 100
+      GOMEMLIMIT: 1GiB
+      GOMAXPROCS: 4
+      # Security settings
+      PLANDEX_SECURITY_MODE: strict
+      PLANDEX_AUDIT_LOGGING: enabled
+      PLANDEX_RATE_LIMITING: enabled
+      PLANDEX_TLS_ONLY: true
+      # Monitoring
+      PLANDEX_METRICS_ENABLED: true
+      PLANDEX_HEALTH_CHECK_ENABLED: true
+    networks:
+      - plandex-network
+    secrets:
+      - database_url
+      - jwt_secret
+      - api_keys
+    depends_on:
+      plandex-postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 60s
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8099/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    command: [ "/bin/sh", "-c", "/scripts/wait-for-it.sh plandex-postgres:5432 -- ./plandex-server" ]
+
+  # Redis for caching and session storage
+  plandex-redis:
+    image: redis:7.2-alpine
+    restart: always
+    volumes:
+      - plandex-redis:/data:Z
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - plandex-network
+    command: redis-server /usr/local/etc/redis/redis.conf
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+
+  # Nginx reverse proxy
+  plandex-nginx:
+    image: nginx:1.25-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+      - /etc/ssl/private:/etc/ssl/private:ro
+      - plandex-nginx-cache:/var/cache/nginx:Z
+    networks:
+      - plandex-network
+    depends_on:
+      - plandex-server
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '1.0'
+        reservations:
+          memory: 64M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    user: "101:101"
+
+  # Monitoring and observability
+  plandex-prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - plandex-prometheus:/prometheus:Z
+    networks:
+      - plandex-network
+    ports:
+      - "127.0.0.1:9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "65534:65534"
+
+  plandex-grafana:
+    image: grafana/grafana:latest
+    restart: always
+    volumes:
+      - plandex-grafana:/var/lib/grafana:Z
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - plandex-network
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_password
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    secrets:
+      - grafana_password
+    depends_on:
+      - plandex-prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "472:472"
+
+networks:
+  plandex-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: plandex-br0
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  plandex-db:
+    driver: local
+    driver_opts:
+      type: ext4
+      o: defaults,noexec,nosuid
+  plandex-files:
+    driver: local
+    driver_opts:
+      type: ext4
+      o: defaults,noexec,nosuid
+  plandex-redis:
+    driver: local
+  plandex-nginx-cache:
+    driver: local
+  plandex-prometheus:
+    driver: local
+  plandex-grafana:
+    driver: local
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  database_url:
+    file: ./secrets/database_url.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  api_keys:
+    file: ./secrets/api_keys.json
+  grafana_password:
+    file: ./secrets/grafana_password.txt

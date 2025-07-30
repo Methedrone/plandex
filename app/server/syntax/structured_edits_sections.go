@@ -126,8 +126,7 @@ func getSections(parent *tree_sitter.Node, bytes []byte, numSections, fromLine, 
 	}
 
 	if verboseLogging {
-		fmt.Printf("structures:\n")
-		log.Println(spew.Sdump(structures))
+		fmt.Printf("structures: %d items\n", len(structures))
 	}
 
 	numStructural := len(structures)
@@ -162,8 +161,7 @@ func getSections(parent *tree_sitter.Node, bytes []byte, numSections, fromLine, 
 	}
 
 	if verboseLogging {
-		fmt.Printf("sections:\n")
-		log.Println(spew.Sdump(sections))
+		fmt.Printf("sections: %d created\n", len(sections))
 
 		fmt.Println("Sections content:")
 		for i, section := range sections {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"plandex-server/db"
 	modelPlan "plandex-server/model/plan"
+	"plandex-server/performance"
 	"plandex-server/types"
 	"time"
 
@@ -15,6 +17,31 @@ import (
 )
 
 const HeartbeatInterval = 5 * time.Second
+
+// marshalMessageWithPool uses object pools for efficient JSON marshaling
+func marshalMessageWithPool(msg interface{}) ([]byte, error) {
+	if performance.GlobalObjectPools == nil {
+		// Fallback to standard marshaling if pools aren't initialized
+		return json.Marshal(msg)
+	}
+	
+	// Get a buffer and JSON encoder from the pool
+	buf := performance.GlobalObjectPools.GetBuffer()
+	defer performance.GlobalObjectPools.PutBuffer(buf)
+	
+	encoder := performance.GlobalObjectPools.GetJSONEncoder(buf)
+	defer performance.GlobalObjectPools.PutJSONEncoder(encoder)
+	
+	// Encode the message
+	if err := encoder.Encode(msg); err != nil {
+		return nil, err
+	}
+	
+	// Return a copy of the buffer contents
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	return result, nil
+}
 
 func startResponseStream(reqCtx context.Context, w http.ResponseWriter, auth *types.ServerAuth, planId, branch string, isConnect bool) {
 	log.Println("Response stream manager: starting plan stream")
@@ -35,7 +62,7 @@ func startResponseStream(reqCtx context.Context, w http.ResponseWriter, auth *ty
 		Type: shared.StreamMessageStart,
 	}
 
-	bytes, err := json.Marshal(msg)
+	bytes, err := marshalMessageWithPool(msg)
 
 	if err != nil {
 		log.Printf("Response stream manager: error marshalling message: %v\n", err)
@@ -110,11 +137,26 @@ func startResponseStream(reqCtx context.Context, w http.ResponseWriter, auth *ty
 }
 
 func sendStreamMessage(w http.ResponseWriter, msg string) error {
-	bytes := []byte(msg + shared.STREAM_MESSAGE_SEPARATOR)
+	// Use object pool for efficient message building
+	var msgBytes []byte
+	if performance.GlobalObjectPools != nil {
+		buf := performance.GlobalObjectPools.GetBuffer()
+		defer performance.GlobalObjectPools.PutBuffer(buf)
+		
+		buf.WriteString(msg)
+		buf.WriteString(shared.STREAM_MESSAGE_SEPARATOR)
+		
+		// Copy the buffer contents to avoid holding the buffer longer than needed
+		msgBytes = make([]byte, buf.Len())
+		copy(msgBytes, buf.Bytes())
+	} else {
+		// Fallback if pools aren't available
+		msgBytes = []byte(msg + shared.STREAM_MESSAGE_SEPARATOR)
+	}
 
 	// log.Printf("Response stream manager: writing message to client: %s\n", msg)
 
-	_, err := w.Write(bytes)
+	_, err := w.Write(msgBytes)
 	if err != nil {
 		log.Printf("Response stream manager: error writing to client: %v\n", err)
 		return err
@@ -171,7 +213,7 @@ func initConnectActive(auth *types.ServerAuth, planId, branch string, w http.Res
 		msg.MissingFilePath = active.MissingFilePath
 	}
 
-	bytes, err := json.Marshal(msg)
+	bytes, err := marshalMessageWithPool(msg)
 
 	if err != nil {
 		return fmt.Errorf("error marshalling message: %v", err)
@@ -208,7 +250,7 @@ func initConnectActive(auth *types.ServerAuth, planId, branch string, w http.Res
 				Type:      shared.StreamMessageBuildInfo,
 				BuildInfo: &buildInfo,
 			}
-			bytes, err := json.Marshal(msg)
+			bytes, err := marshalMessageWithPool(msg)
 
 			if err != nil {
 				return fmt.Errorf("error marshalling message: %v", err)

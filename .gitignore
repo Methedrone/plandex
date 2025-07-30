@@ -22,3 +22,7 @@ dist/
 *.code-workspace
 
 __pycache__/
+
+.claude*
+.claude/
+CLAUDE.md

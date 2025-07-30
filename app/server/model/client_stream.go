@@ -102,10 +102,10 @@ func processChatCompletionStream(
 ) (*types.ModelResponse, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 
-	log.Println("processChatCompletionStream - modelConfig", spew.Sdump(map[string]interface{}{
-		"model":    modelConfig.BaseModelConfig.ModelName,
-		"provider": modelConfig.BaseModelConfig.Provider,
-	}))
+	// Efficient logging optimized for production performance
+	log.Printf("processChatCompletionStream - model: %s, provider: %s",
+		modelConfig.BaseModelConfig.ModelName,
+		modelConfig.BaseModelConfig.Provider)
 
 	stream, err := createChatCompletionStreamExtended(modelConfig, client, baseUrl, streamCtx, req)
 	if err != nil {
@@ -117,6 +117,7 @@ func processChatCompletionStream(
 	defer cancel()
 
 	accumulator := types.NewStreamCompletionAccumulator()
+	defer accumulator.Cleanup() // Return StringBuilder to pool when done
 	// Create a timer that will trigger if no chunk is received within the specified duration
 	timer := time.NewTimer(ACTIVE_STREAM_CHUNK_TIMEOUT)
 	defer timer.Stop()

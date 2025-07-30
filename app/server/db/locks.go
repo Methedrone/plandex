@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/lib/pq"
 	"github.com/pkg/errors"
 )
@@ -282,7 +281,9 @@ func lockRepoDB(params LockRepoParams, numRetry int) (string, error) {
 			log.Println("can't acquire lock.", "numRetry:", numRetry)
 		}
 		conflictErr := errors.New("lock conflict: cannot acquire read/write lock")
-		log.Printf("[Lock][%d] can't acquire lock, retrying: %v | reason: %s | now: %s | locks:\n%s\n", goroutineID, conflictErr, params.Reason, now, spew.Sdump(locks))
+		// Efficient lock conflict logging optimized for production performance
+		log.Printf("[Lock][%d] can't acquire lock, retrying: %v | reason: %s | now: %s | active_locks: %d", 
+			goroutineID, conflictErr, params.Reason, now, len(locks))
 
 		return retryWithExponentialBackoff(params.Ctx, conflictErr, numRetry, func(nextAttempt int) (string, error) {
 			return lockRepoDB(params, nextAttempt)

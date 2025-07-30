@@ -16,8 +16,9 @@ func (state *activeTellStreamState) handleUsageChunk(usage *openai.Usage) {
 	plan := state.plan
 	generationId := state.generationId
 
-	log.Println("Tell stream usage:")
-	log.Println(spew.Sdump(usage))
+	// Efficient usage logging optimized for production performance
+	log.Printf("Tell stream usage: prompt=%d, completion=%d, total=%d", 
+		usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 
 	var cachedTokens int
 	if usage.PromptTokensDetails != nil {

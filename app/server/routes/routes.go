@@ -39,6 +39,10 @@ func AddHealthRoutes(r *mux.Router) {
 		}
 		fmt.Fprint(w, "OK")
 	})
+	
+	// Performance monitoring endpoints
+	HandlePlandexFn(r, "/health/performance", false, handlers.GetPerformanceHealth)
+	HandlePlandexFn(r, "/health/performance/stats", false, handlers.GetPerformanceStats)
 
 	HandlePlandexFn(r, "/version", false, func(w http.ResponseWriter, r *http.Request) {
 		// Log the host

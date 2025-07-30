@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"plandex-server/cache"
 	"plandex-server/db"
 	"plandex-server/host"
 	"plandex-server/model/plan"

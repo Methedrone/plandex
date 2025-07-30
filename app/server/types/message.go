@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sashabaranov/go-openai"
+	"plandex-server/performance"
 )
 
 type CacheControlType string
@@ -243,17 +244,32 @@ type ModelResponse struct {
 
 // StreamCompletionAccumulator accumulates content and tracks usage from streaming chunks
 type StreamCompletionAccumulator struct {
-	content      strings.Builder
+	content      *strings.Builder // Now uses pooled StringBuilder
 	usage        *openai.Usage
 	generationId string
 	firstTokenAt time.Time
+	usingPool    bool // Track whether we're using a pooled builder
 }
 
-// NewStreamCompletionAccumulator creates a new StreamCompletionAccumulator
+// NewStreamCompletionAccumulator creates a new StreamCompletionAccumulator with pooled StringBuilder
 func NewStreamCompletionAccumulator() *StreamCompletionAccumulator {
+	var content *strings.Builder
+	var usingPool bool
+	
+	// Try to get a StringBuilder from the pool
+	if performance.GlobalObjectPools != nil {
+		content = performance.GlobalObjectPools.GetStringBuilder()
+		usingPool = true
+	} else {
+		// Fallback to new StringBuilder if pools aren't available
+		content = &strings.Builder{}
+		usingPool = false
+	}
+	
 	return &StreamCompletionAccumulator{
-		content: strings.Builder{},
-		usage:   nil,
+		content:   content,
+		usage:     nil,
+		usingPool: usingPool,
 	}
 }
 
@@ -277,6 +293,14 @@ func (a *StreamCompletionAccumulator) SetFirstTokenAt(firstTokenAt time.Time) {
 
 func (a *StreamCompletionAccumulator) Content() string {
 	return a.content.String()
+}
+
+// Cleanup returns the StringBuilder to the pool if it was pooled
+func (a *StreamCompletionAccumulator) Cleanup() {
+	if a.usingPool && performance.GlobalObjectPools != nil && a.content != nil {
+		performance.GlobalObjectPools.PutStringBuilder(a.content)
+		a.content = nil // Prevent accidental reuse
+	}
 }
 
 // Result creates a StreamCompletionResult from the accumulated content and usage
